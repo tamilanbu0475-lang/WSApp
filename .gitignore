@@ -1,0 +1,49 @@
+# =========================
+# Secrets / Environment
+# =========================
+.env
+backend/.env
+backend/*-firebase-adminsdk-*.json
+
+# =========================
+# Expo
+# =========================
+.expo/
+.expo-shared/
+web-build/
+
+# =========================
+# Node.js
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# =========================
+# Python
+# =========================
+backend/venv/
+backend/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# =========================
+# VS Code
+# =========================
+.vscode/
+*.code-workspace
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Claude
+# =========================
+.claude/

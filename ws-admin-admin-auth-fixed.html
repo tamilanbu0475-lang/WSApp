@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>WS App — Admin Panel</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Playfair+Display:wght@700;800;900&display=swap');
+
+:root {
+  --b:        #5C0A2D;
+  --bd:       #3D0720;
+  --bdd:      #1E0310;
+  --bl:       #7A1040;
+  --em:       #0B6E4F;
+  --eml:      #0E8A63;
+  --g:        #C9A84C;
+  --gl:       #E2C06A;
+  --gd:       #8A6E2F;
+  --w:        #FDF8F9;
+  --ow:       #F5EFF1;
+  --red:      #C0392B;
+  --redl:     #E74C3C;
+  --blue:     #1A3A6B;
+  --glass:    rgba(255,255,255,0.07);
+  --glass2:   rgba(255,255,255,0.12);
+  --glass3:   rgba(255,255,255,0.04);
+  --border-g: rgba(201,168,76,0.25);
+  --border-w: rgba(255,255,255,0.12);
+  --shadow:   0 8px 32px rgba(0,0,0,0.4);
+  --shadow2:  0 20px 60px rgba(0,0,0,0.5);
+  --sw: 260px;
+}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{font-size:14px;scroll-behavior:smooth;}
+body{font-family:'Inter',system-ui,sans-serif;background:#1A0310;color:var(--w);min-height:100vh;overflow-x:hidden;}
+
+/* ── ANIMATED BG ── */
+body::before{
+  content:'';position:fixed;inset:0;z-index:0;
+  background:
+    radial-gradient(ellipse at 0% 0%,   rgba(120,20,60,0.95) 0%,  transparent 50%),
+    radial-gradient(ellipse at 100% 0%,  rgba(11,110,79,0.30) 0%,  transparent 40%),
+    radial-gradient(ellipse at 50% 100%, rgba(201,168,76,0.15) 0%, transparent 50%),
+    radial-gradient(ellipse at 100% 100%,rgba(26,58,107,0.30) 0%,  transparent 40%);
+  animation: bgShift 12s ease-in-out infinite alternate;
+}
+@keyframes bgShift{
+  0%{opacity:1;}
+  100%{background:
+    radial-gradient(ellipse at 20% 20%,  rgba(92,10,45,0.8) 0%,   transparent 50%),
+    radial-gradient(ellipse at 80% 10%,  rgba(11,110,79,0.25) 0%, transparent 40%),
+    radial-gradient(ellipse at 40% 90%,  rgba(201,168,76,0.1) 0%, transparent 50%),
+    radial-gradient(ellipse at 90% 80%,  rgba(26,58,107,0.25) 0%, transparent 40%);
+  opacity:1;}
+}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:rgba(201,168,76,0.3);border-radius:4px;}
+::-webkit-scrollbar-thumb:hover{background:rgba(201,168,76,0.6);}
+
+/* ══════════════════════════════════
+   LOGIN
+══════════════════════════════════ */
+#loginScreen{
+  position:fixed;inset:0;z-index:1000;
+  display:flex;align-items:center;justify-content:center;
+  padding:20px;
+}
+.login-wrap{
+  width:100%;max-width:440px;position:relative;
+}
+.login-card{
+  background:rgba(30,3,16,0.6);
+  border:1px solid var(--border-g);
+  border-radius:28px;padding:48px 44px;
+  backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);
+  box-shadow:var(--shadow2),inset 0 1px 0 rgba(255,255,255,0.06);
+  position:relative;overflow:hidden;
+}
+.login-card::before{
+  content:'';position:absolute;top:-1px;left:20%;right:20%;height:1px;
+  background:linear-gradient(90deg,transparent,var(--g),transparent);
+}
+.login-glow{
+  position:absolute;top:-60px;left:50%;transform:translateX(-50%);
+  width:200px;height:200px;border-radius:50%;
+  background:rgba(92,10,45,0.4);filter:blur(60px);pointer-events:none;
+}
+.login-logo{display:flex;align-items:center;gap:14px;margin-bottom:40px;}
+.l-circle{
+  width:54px;height:54px;border-radius:50%;
+  background:linear-gradient(135deg,var(--b),var(--bd));
+  border:1.5px solid var(--g);
+  display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:900;color:var(--g);letter-spacing:1px;
+  box-shadow:0 0 24px rgba(201,168,76,0.25);
+}
+.l-brand h1{color:var(--w);font-size:19px;font-weight:800;letter-spacing:0.3px;}
+.l-brand p{color:rgba(201,168,76,0.6);font-size:10px;letter-spacing:3px;text-transform:uppercase;margin-top:2px;}
+.login-h{font-family:'Playfair Display',serif;font-size:28px;font-weight:800;color:var(--w);margin-bottom:6px;letter-spacing:-0.5px;}
+.login-s{color:rgba(255,255,255,0.35);font-size:13px;margin-bottom:36px;}
+.lf{margin-bottom:18px;}
+.lf label{display:block;color:rgba(201,168,76,0.7);font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;}
+.lf input{
+  width:100%;background:rgba(255,255,255,0.05);
+  border:1px solid rgba(255,255,255,0.1);border-radius:14px;
+  padding:14px 18px;color:var(--w);font-size:14px;outline:none;
+  transition:all 0.2s;font-family:'Inter',sans-serif;
+}
+.lf input:focus{border-color:rgba(201,168,76,0.5);background:rgba(255,255,255,0.08);box-shadow:0 0 0 3px rgba(201,168,76,0.08);}
+.lf input::placeholder{color:rgba(255,255,255,0.2);}
+.lerr{color:#ff6b6b;font-size:11px;margin-top:6px;display:none;padding:8px 12px;background:rgba(192,57,43,0.1);border-radius:8px;border:1px solid rgba(192,57,43,0.2);}
+.lbtn{
+  width:100%;padding:16px;margin-top:4px;
+  background:linear-gradient(135deg,var(--g),var(--gl));
+  border:none;border-radius:14px;
+  color:var(--bdd);font-size:13px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;
+  cursor:pointer;transition:all 0.25s;
+  box-shadow:0 4px 24px rgba(201,168,76,0.3);
+}
+.lbtn:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(201,168,76,0.45);}
+.lbtn:active{transform:translateY(0);}
+.l-foot{margin-top:28px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;}
+.l-foot span{color:rgba(255,255,255,0.2);font-size:11px;}
+
+/* ══════════════════════════════════
+   SHELL
+══════════════════════════════════ */
+#shell{display:none;min-height:100vh;position:relative;z-index:1;}
+#shell.on{display:flex;}
+
+/* ── SIDEBAR ── */
+.sb{
+  width:var(--sw);position:fixed;top:0;left:0;bottom:0;z-index:200;
+  background:rgba(20,2,12,0.75);
+  border-right:1px solid var(--border-g);
+  backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);
+  display:flex;flex-direction:column;
+  transition:transform 0.3s cubic-bezier(.4,0,.2,1);
+}
+.sb-top{
+  padding:24px 20px;
+  border-bottom:1px solid rgba(255,255,255,0.06);
+  display:flex;align-items:center;gap:12px;
+}
+.sb-logo{
+  width:42px;height:42px;border-radius:12px;
+  background:linear-gradient(135deg,var(--b),var(--bd));
+  border:1.5px solid var(--g);
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:900;color:var(--g);
+  box-shadow:0 0 16px rgba(201,168,76,0.2);flex-shrink:0;
+}
+.sb-brand h2{color:var(--w);font-size:14px;font-weight:800;}
+.sb-brand p{color:rgba(201,168,76,0.5);font-size:9px;letter-spacing:2px;text-transform:uppercase;margin-top:2px;}
+.sb-nav{flex:1;padding:16px 12px;overflow-y:auto;}
+.nav-lbl{color:rgba(201,168,76,0.3);font-size:9px;font-weight:700;letter-spacing:3px;text-transform:uppercase;padding:0 10px;margin:20px 0 6px;}
+.nav-lbl:first-child{margin-top:4px;}
+.ni{
+  display:flex;align-items:center;gap:12px;
+  padding:11px 14px;border-radius:12px;cursor:pointer;
+  color:rgba(255,255,255,0.6);font-size:13px;font-weight:500;
+  transition:all 0.2s;margin-bottom:2px;position:relative;
+  border:1px solid transparent;
+}
+.ni:hover{color:rgba(255,255,255,0.8);background:rgba(255,255,255,0.05);}
+.ni.on{
+  color:var(--g);font-weight:700;
+  background:linear-gradient(135deg,rgba(92,10,45,0.4),rgba(201,168,76,0.08));
+  border-color:rgba(201,168,76,0.15);
+}
+.ni.on::before{
+  content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:3px;height:22px;background:linear-gradient(180deg,var(--g),var(--gd));
+  border-radius:0 3px 3px 0;
+}
+.ni-ico{font-size:16px;width:22px;text-align:center;flex-shrink:0;}
+.nbadge{
+  margin-left:auto;font-size:9px;font-weight:800;
+  padding:3px 7px;border-radius:20px;letter-spacing:0.5px;
+}
+.nbadge.red{background:rgba(192,57,43,0.2);color:#ff6b6b;border:1px solid rgba(192,57,43,0.3);}
+.nbadge.grn{background:rgba(11,110,79,0.2);color:#4ade80;border:1px solid rgba(11,110,79,0.3);}
+.nbadge.gld{background:rgba(201,168,76,0.15);color:var(--g);border:1px solid rgba(201,168,76,0.25);}
+.sb-foot{
+  padding:16px 12px;
+  border-top:1px solid rgba(255,255,255,0.06);
+}
+.adm-row{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 12px;border-radius:12px;
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);
+}
+.adm-av{
+  width:34px;height:34px;border-radius:10px;
+  background:linear-gradient(135deg,var(--g),var(--gd));
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:900;color:var(--bdd);flex-shrink:0;
+}
+.adm-n{color:var(--w);font-size:12px;font-weight:700;}
+.adm-r{color:rgba(201,168,76,0.5);font-size:10px;}
+.lo-btn{margin-left:auto;background:none;border:none;color:rgba(255,255,255,0.25);cursor:pointer;font-size:15px;transition:color 0.2s;padding:4px;}
+.lo-btn:hover{color:#ff6b6b;}
+
+/* ── TOPBAR ── */
+.tb{
+  position:fixed;top:0;left:var(--sw);right:0;height:64px;z-index:100;
+  background:rgba(30,3,16,0.75);
+  border-bottom:1px solid rgba(201,168,76,0.2);
+  backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+  display:flex;align-items:center;padding:0 28px;gap:16px;
+}
+.ham{display:none;background:none;border:none;color:rgba(255,255,255,0.6);font-size:22px;cursor:pointer;padding:4px;}
+.tb-title{font-size:16px;font-weight:800;color:var(--w);}
+.tb-sub{font-size:12px;color:rgba(255,255,255,0.25);margin-left:6px;}
+.tb-r{margin-left:auto;display:flex;align-items:center;gap:12px;}
+.tb-time{font-size:12px;color:rgba(255,255,255,0.6);font-weight:500;}
+.tb-dot{
+  width:8px;height:8px;border-radius:50%;background:#4ade80;
+  box-shadow:0 0 8px rgba(74,222,128,0.6);
+  animation:blink 2s infinite;
+}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:0.4;}}
+.nb-btn{
+  position:relative;width:38px;height:38px;border-radius:10px;
+  background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;
+  transition:all 0.2s;
+}
+.nb-btn:hover{background:rgba(255,255,255,0.1);}
+.nb-dot{position:absolute;top:8px;right:8px;width:6px;height:6px;background:var(--red);border-radius:50%;border:1.5px solid var(--bdd);}
+.tb-av{
+  width:38px;height:38px;border-radius:10px;
+  background:linear-gradient(135deg,var(--b),var(--bl));
+  border:1.5px solid rgba(201,168,76,0.3);
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:900;color:var(--g);cursor:pointer;
+  box-shadow:0 0 12px rgba(92,10,45,0.4);
+}
+
+/* ── MAIN ── */
+.main{margin-left:var(--sw);margin-top:64px;padding:28px;min-height:calc(100vh - 64px);background:rgba(255,255,255,0.02);}
+
+/* ── PAGE ── */
+.pg{display:none;}
+.pg.on{display:block;}
+.pg-hd{margin-bottom:28px;}
+.pg-hd h2{font-family:'Playfair Display',serif;font-size:26px;font-weight:800;color:#fff;letter-spacing:-0.5px;text-shadow:0 2px 8px rgba(0,0,0,0.3);}
+.pg-hd p{color:rgba(255,255,255,0.3);font-size:13px;margin-top:5px;}
+
+/* ── GLASS CARD ── */
+.gc{
+  background:rgba(255,255,255,0.09);
+  border:1px solid rgba(255,255,255,0.13);
+  border-radius:20px;
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  box-shadow:0 4px 24px rgba(0,0,0,0.2),inset 0 1px 0 rgba(255,255,255,0.06);
+  overflow:hidden;position:relative;
+}
+.gc::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(201,168,76,0.3),transparent);
+  pointer-events:none;
+}
+
+/* ── STAT CARDS ── */
+.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-bottom:24px;}
+.sc{
+  padding:22px;border-radius:20px;position:relative;overflow:hidden;
+  background:rgba(255,255,255,0.08);
+  border:1px solid rgba(255,255,255,0.12);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  transition:transform 0.2s,box-shadow 0.2s;cursor:default;
+}
+.sc:hover{transform:translateY(-3px);box-shadow:0 16px 40px rgba(0,0,0,0.3);}
+.sc-glow{position:absolute;top:-30px;right:-30px;width:100px;height:100px;border-radius:50%;filter:blur(40px);opacity:0.5;pointer-events:none;}
+.sc-glow.b{background:var(--b);}
+.sc-glow.r{background:var(--red);}
+.sc-glow.g{background:var(--g);}
+.sc-glow.e{background:var(--em);}
+.sc-glow.bl{background:var(--blue);}
+.sc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;}
+.sc-ico{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;backdrop-filter:blur(10px);}
+.sc-ico.b{background:rgba(92,10,45,0.3);border:1px solid rgba(92,10,45,0.5);}
+.sc-ico.r{background:rgba(192,57,43,0.2);border:1px solid rgba(192,57,43,0.3);}
+.sc-ico.g{background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.25);}
+.sc-ico.e{background:rgba(11,110,79,0.2);border:1px solid rgba(11,110,79,0.3);}
+.sc-ico.bl{background:rgba(26,58,107,0.2);border:1px solid rgba(26,58,107,0.3);}
+.sc-tr{font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;}
+.sc-tr.up{background:rgba(74,222,128,0.1);color:#4ade80;border:1px solid rgba(74,222,128,0.2);}
+.sc-tr.dn{background:rgba(248,113,113,0.1);color:#f87171;border:1px solid rgba(248,113,113,0.2);}
+.sc-num{font-size:36px;font-weight:900;color:var(--w);letter-spacing:-2px;line-height:1;margin-bottom:5px;}
+.sc-lbl{font-size:12px;color:rgba(255,255,255,0.4);font-weight:500;}
+
+/* ── TABLE CARD ── */
+.tc{margin-bottom:20px;}
+.tc-hd{
+  padding:20px 24px;display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid rgba(255,255,255,0.06);
+}
+.tc-hd h3{font-size:15px;font-weight:800;color:#fff;}
+.tc-hd p{font-size:11px;color:rgba(255,255,255,0.3);margin-top:3px;}
+.tc-acts{display:flex;gap:8px;align-items:center;}
+.tbtn{padding:8px 16px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid;transition:all 0.2s;letter-spacing:0.3px;}
+.tbtn.p{background:linear-gradient(135deg,var(--b),var(--bl));color:var(--g);border-color:rgba(201,168,76,0.3);}
+.tbtn.p:hover{box-shadow:0 4px 16px rgba(92,10,45,0.4);}
+.tbtn.o{background:transparent;color:rgba(255,255,255,0.5);border-color:rgba(255,255,255,0.12);}
+.tbtn.o:hover{background:rgba(255,255,255,0.06);color:var(--w);}
+.sb-bar{padding:14px 24px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;gap:10px;}
+.si{
+  flex:1;background:rgba(255,255,255,0.08);
+  border:1px solid rgba(255,255,255,0.14);border-radius:10px;
+  padding:10px 16px;font-size:12px;color:var(--w);outline:none;font-family:'Inter',sans-serif;
+  transition:all 0.2s;
+}
+.si:focus{border-color:rgba(201,168,76,0.4);background:rgba(255,255,255,0.08);}
+.si::placeholder{color:rgba(255,255,255,0.2);}
+.fsel{
+  background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);
+  border-radius:10px;padding:10px 14px;font-size:12px;color:rgba(255,255,255,0.6);
+  outline:none;cursor:pointer;font-family:'Inter',sans-serif;
+}
+.fsel option{background:#1E0310;color:var(--w);}
+table{width:100%;border-collapse:collapse;}
+thead tr{background:rgba(255,255,255,0.03);}
+th{padding:12px 18px;text-align:left;font-size:10px;font-weight:700;color:rgba(255,255,255,0.3);letter-spacing:1.5px;text-transform:uppercase;white-space:nowrap;}
+td{padding:14px 18px;font-size:13px;color:rgba(255,255,255,0.92);border-top:1px solid rgba(255,255,255,0.07);vertical-align:middle;}
+tr:hover td{background:rgba(255,255,255,0.02);}
+.uc{display:flex;align-items:center;gap:10px;}
+.uav{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;}
+.uav.b{background:linear-gradient(135deg,var(--b),var(--bl));color:var(--g);}
+.uav.e{background:linear-gradient(135deg,var(--em),var(--eml));color:white;}
+.uav.bl{background:linear-gradient(135deg,var(--blue),#2a5298);color:white;}
+.uav.p{background:linear-gradient(135deg,#6A3090,#8B4DB3);color:white;}
+.uav.o{background:linear-gradient(135deg,#B5451B,#D4632A);color:white;}
+.un{font-size:13px;font-weight:700;color:var(--w);}
+.up2{font-size:11px;color:rgba(255,255,255,0.3);margin-top:1px;}
+
+/* ── BADGES ── */
+.bdg{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.5px;white-space:nowrap;}
+.bdg.act{background:rgba(74,222,128,0.1);color:#4ade80;border:1px solid rgba(74,222,128,0.2);}
+.bdg.blk{background:rgba(248,113,113,0.1);color:#f87171;border:1px solid rgba(248,113,113,0.2);}
+.bdg.pnd{background:rgba(251,191,36,0.1);color:#fbbf24;border:1px solid rgba(251,191,36,0.2);}
+.bdg.res{background:rgba(74,222,128,0.1);color:#4ade80;border:1px solid rgba(74,222,128,0.2);}
+.bdg.crit{background:rgba(248,113,113,0.1);color:#f87171;border:1px solid rgba(248,113,113,0.2);}
+.bdg.har{background:rgba(92,10,45,0.3);color:rgba(201,168,76,0.8);border:1px solid rgba(92,10,45,0.5);}
+.bdg.stk{background:rgba(26,58,107,0.2);color:#93c5fd;border:1px solid rgba(26,58,107,0.3);}
+.bdg.abu{background:rgba(192,57,43,0.2);color:#fca5a5;border:1px solid rgba(192,57,43,0.3);}
+.bdg.thr{background:rgba(201,168,76,0.1);color:var(--g);border:1px solid rgba(201,168,76,0.2);}
+.bdg.cyb{background:rgba(11,110,79,0.2);color:#6ee7b7;border:1px solid rgba(11,110,79,0.3);}
+.bdg.oth{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.5);border:1px solid rgba(255,255,255,0.1);}
+.bdg.mon{background:rgba(251,191,36,0.1);color:#fbbf24;border:1px solid rgba(251,191,36,0.2);}
+.bdg.saf{background:rgba(74,222,128,0.1);color:#4ade80;border:1px solid rgba(74,222,128,0.2);}
+
+/* ── ACTION BUTTONS ── */
+.ab{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);padding:5px 12px;border-radius:8px;font-size:10px;font-weight:700;cursor:pointer;transition:all 0.15s;margin-right:4px;color:rgba(255,255,255,0.6);font-family:'Inter',sans-serif;}
+.ab:hover{background:rgba(255,255,255,0.1);color:var(--w);}
+.ab.vw:hover{border-color:rgba(201,168,76,0.4);color:var(--g);}
+.ab.bl2:hover{border-color:rgba(248,113,113,0.4);color:#f87171;background:rgba(248,113,113,0.08);}
+.ab.rs:hover{border-color:rgba(74,222,128,0.4);color:#4ade80;background:rgba(74,222,128,0.08);}
+.ab.rp:hover{border-color:rgba(147,197,253,0.4);color:#93c5fd;background:rgba(147,197,253,0.08);}
+.ab.dl:hover{border-color:rgba(248,113,113,0.4);color:#f87171;background:rgba(248,113,113,0.08);}
+
+/* ── ALERT CARDS ── */
+.alc{
+  padding:18px 22px;margin-bottom:12px;
+  border-radius:16px;display:flex;align-items:center;gap:16px;
+  background:rgba(255,255,255,0.07);
+  border:1px solid rgba(255,255,255,0.12);
+  transition:all 0.2s;position:relative;overflow:hidden;
+}
+.alc:hover{background:rgba(255,255,255,0.07);transform:translateX(3px);}
+.alc.crit{border-left:3px solid var(--red);}
+.alc.crit::before{content:'';position:absolute;left:0;top:0;bottom:0;width:60px;background:linear-gradient(90deg,rgba(192,57,43,0.1),transparent);}
+.alc.safe{border-left:3px solid #4ade80;opacity:0.7;}
+.al-ico{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+.al-ico.r{background:rgba(192,57,43,0.15);animation:pulse 1.5s infinite;}
+.al-ico.g{background:rgba(74,222,128,0.1);}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(192,57,43,0.4);}50%{box-shadow:0 0 0 10px rgba(192,57,43,0);}}
+.al-info{flex:1;}
+.al-name{font-size:14px;font-weight:800;color:var(--w);}
+.al-loc{font-size:12px;color:rgba(255,255,255,0.4);margin-top:3px;}
+.al-t{font-size:11px;color:rgba(255,255,255,0.25);margin-top:2px;}
+.al-acts{display:flex;gap:8px;align-items:center;flex-shrink:0;}
+
+/* ── GRID 2 ── */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;}
+
+/* ── CHART ── */
+.cc{padding:22px;}
+.cc h3{font-size:14px;font-weight:800;color:var(--w);margin-bottom:20px;}
+.bars{display:flex;align-items:flex-end;gap:8px;height:130px;}
+.bw{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end;}
+.bar{width:100%;border-radius:6px 6px 0 0;min-height:4px;transition:height 0.6s ease;}
+.blbl{font-size:10px;color:rgba(255,255,255,0.3);font-weight:600;}
+.bval{font-size:11px;font-weight:800;color:rgba(255,255,255,0.6);}
+.dw{display:flex;align-items:center;gap:20px;}
+.leg{flex:1;}
+.li{display:flex;align-items:center;gap:8px;margin-bottom:9px;}
+.ld{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+.lt{font-size:12px;color:rgba(255,255,255,0.4);}
+.lv{margin-left:auto;font-size:12px;font-weight:800;color:var(--w);}
+
+/* ── ACTIVITY ── */
+.act-list{padding:0 24px 12px;}
+.act-i{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.04);}
+.act-i:last-child{border-bottom:none;}
+.act-d{width:8px;height:8px;border-radius:50%;margin-top:5px;flex-shrink:0;}
+.act-txt{flex:1;font-size:12px;color:rgba(255,255,255,0.72);line-height:1.6;}
+.act-txt strong{color:rgba(201,168,76,0.8);}
+.act-tm{font-size:10px;color:rgba(255,255,255,0.2);white-space:nowrap;}
+
+/* ── ANNOUNCE CARDS ── */
+.anc{
+  padding:18px 22px;margin-bottom:12px;border-radius:16px;
+  display:flex;align-items:center;gap:16px;
+  background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);
+  transition:all 0.2s;
+}
+.anc:hover{background:rgba(255,255,255,0.07);}
+.an-ico{width:44px;height:44px;border-radius:12px;background:rgba(92,10,45,0.2);border:1px solid rgba(92,10,45,0.3);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+.an-inf{flex:1;}
+.an-t{font-size:14px;font-weight:700;color:var(--w);}
+.an-s{font-size:12px;color:rgba(255,255,255,0.3);margin-top:3px;}
+.an-acts{display:flex;gap:8px;}
+
+/* ── ADD FORM ── */
+.af{
+  padding:22px;margin-top:16px;
+  background:rgba(255,255,255,0.03);
+  border:1px dashed rgba(201,168,76,0.15);
+  border-radius:16px;
+}
+.af h4{font-size:13px;font-weight:800;color:var(--g);margin-bottom:18px;letter-spacing:0.3px;}
+.fr{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
+.ff{margin-bottom:12px;}
+.ff label{display:block;font-size:10px;font-weight:700;color:rgba(255,255,255,0.3);letter-spacing:2px;text-transform:uppercase;margin-bottom:7px;}
+.ff input,.ff select,.ff textarea{
+  width:100%;background:rgba(255,255,255,0.05);
+  border:1px solid rgba(255,255,255,0.08);border-radius:10px;
+  padding:11px 14px;font-size:13px;color:var(--w);outline:none;
+  transition:all 0.2s;font-family:'Inter',sans-serif;
+}
+.ff input:focus,.ff select:focus,.ff textarea:focus{border-color:rgba(201,168,76,0.4);background:rgba(255,255,255,0.08);}
+.ff input::placeholder,.ff textarea::placeholder{color:rgba(255,255,255,0.2);}
+.ff select option{background:#1E0310;}
+.ff textarea{resize:vertical;min-height:80px;}
+.fsub{
+  background:linear-gradient(135deg,var(--b),var(--bl));
+  color:var(--g);border:1px solid rgba(201,168,76,0.3);
+  padding:12px 24px;border-radius:10px;
+  font-size:13px;font-weight:800;cursor:pointer;
+  transition:all 0.2s;font-family:'Inter',sans-serif;letter-spacing:0.3px;
+}
+.fsub:hover{box-shadow:0 4px 20px rgba(92,10,45,0.4);transform:translateY(-1px);}
+
+/* ── OVERLAY ── */
+.ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:150;backdrop-filter:blur(4px);}
+
+/* ── RESPONSIVE ── */
+@media(max-width:960px){
+  .sb{transform:translateX(-100%);}
+  .sb.op{transform:translateX(0);}
+  .tb{left:0;}
+  .main{margin-left:0;}
+  .ham{display:flex;}
+  .ov{display:block;opacity:0;pointer-events:none;transition:opacity 0.3s;}
+  .ov.op{opacity:1;pointer-events:auto;}
+  .g2{grid-template-columns:1fr;}
+  .fr{grid-template-columns:1fr;}
+}
+@media(max-width:600px){
+  .sg{grid-template-columns:1fr 1fr;}
+  .main{padding:16px;}
+  .tc-acts{display:none;}
+}
+
+/* ── REAL USERS / MODAL ── */
+.user-empty{padding:32px;text-align:center;color:rgba(255,255,255,.55);}
+.user-error{padding:24px;text-align:center;color:#ffb3ad;}
+.loading-row td{padding:32px!important;text-align:center;color:rgba(255,255,255,.55);}
+.umodal{display:none;position:fixed;inset:0;z-index:500;align-items:center;justify-content:center;background:rgba(0,0,0,.72);backdrop-filter:blur(6px);padding:20px;}
+.umodal.on{display:flex;}
+.umodal-card{width:min(520px,100%);background:linear-gradient(145deg,#240513,#120108);border:1px solid rgba(201,168,76,.28);border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.6);overflow:hidden;}
+.umodal-hd{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid rgba(255,255,255,.08);}
+.umodal-hd h3{font-size:16px;color:var(--w);}
+.umodal-close{background:transparent;border:0;color:rgba(255,255,255,.65);font-size:22px;cursor:pointer;}
+.umodal-body{padding:20px;}
+.udetail-top{display:flex;gap:14px;align-items:center;margin-bottom:20px;}
+.udetail-av{width:58px;height:58px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--b),var(--bl));color:#fff;font-weight:900;font-size:18px;border:1px solid rgba(201,168,76,.25);}
+.udetail-name{font-size:18px;font-weight:800;color:var(--w);}
+.udetail-email{font-size:12px;color:rgba(255,255,255,.5);margin-top:4px;}
+.udetail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.udetail-item{padding:13px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.03);}
+.udetail-item span{display:block;font-size:11px;color:rgba(255,255,255,.42);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;}
+.udetail-item strong{font-size:13px;color:var(--w);word-break:break-word;}
+@media(max-width:600px){.udetail-grid{grid-template-columns:1fr}.umodal{padding:12px}.umodal-card{border-radius:14px}}
+
+
+.section-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;}
+.section-row h3{font-size:15px;font-weight:800;color:var(--w);}
+.table-wrap{width:100%;overflow:auto;}
+.empty-state{padding:28px 12px;text-align:center;color:rgba(255,255,255,.48);font-size:12px;line-height:1.6;}
+.error-state{padding:20px;text-align:center;color:#ffb5b0;font-size:12px;line-height:1.7;}
+.data-note{margin-top:16px;color:rgba(255,255,255,.38);font-size:11px;line-height:1.6;}
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:500;display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px);}
+.modal-backdrop.on{display:flex;}
+.data-modal{width:min(680px,100%);max-height:85vh;overflow:auto;background:#210611;border:1px solid var(--border-g);border-radius:16px;box-shadow:var(--shadow2);padding:22px;}
+.data-modal h3{font-size:17px;margin-bottom:8px;}.data-modal .meta{color:rgba(255,255,255,.5);font-size:11px;margin-bottom:18px;}
+.kv-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}.kv{background:rgba(255,255,255,.04);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.07);}.kv span{display:block;color:rgba(255,255,255,.42);font-size:10px;margin-bottom:5px}.kv strong{font-size:12px;word-break:break-word;}
+.action-group{display:flex;gap:7px;flex-wrap:wrap;}.danger-btn{border-color:rgba(192,57,43,.55)!important;color:#ff9d95!important;}.success-btn{border-color:rgba(11,110,79,.55)!important;color:#7df0c9!important;}
+@media(max-width:600px){.kv-grid{grid-template-columns:1fr;}.section-row{align-items:flex-start;}}
+
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginScreen">
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-glow"></div>
+      <div class="login-logo">
+        <div class="l-circle">WS</div>
+        <div class="l-brand"><h1>WS App</h1><p>Admin Control Panel</p></div>
+      </div>
+      <h2 class="login-h">Welcome Back</h2>
+      <p class="login-s">Secure access — authorized personnel only</p>
+      <div class="lf">
+        <label>Admin ID / Phone</label>
+        <input type="text" id="lid" placeholder="Enter admin ID" value=""/>
+      </div>
+      <div class="lf">
+        <label>Password</label>
+        <input type="password" id="lpwd" placeholder="Enter password" value=""/>
+        <div class="lerr" id="lerr">⚠️ Invalid credentials. Please try again.</div>
+      </div>
+      <button class="lbtn" onclick="doLogin()">🔐 &nbsp;Access Dashboard</button>
+      <div class="l-foot"><span>🔒 WS App Admin Panel • v1.0 • </span></div>
+    </div>
+  </div>
+</div>
+
+<!-- SHELL -->
+<div id="shell">
+  <div class="ov" id="ov" onclick="closeSB()"></div>
+
+  <!-- SIDEBAR -->
+  <aside class="sb" id="sb">
+    <div class="sb-top">
+      <div class="sb-logo">WS</div>
+      <div class="sb-brand"><h2>WS Admin</h2><p>Control Panel</p></div>
+    </div>
+    <nav class="sb-nav">
+      <div class="nav-lbl">Overview</div>
+      <div class="ni on" onclick="goPage('dashboard',this)"><span class="ni-ico">📊</span>Dashboard</div>
+      <div class="nav-lbl">Management</div>
+      <div class="ni" onclick="goPage('users',this)"><span class="ni-ico">👥</span>Users<span class="nbadge gld" id="sidebarUsersCount">0</span></div>
+      <div class="ni" onclick="goPage('sos',this)"><span class="ni-ico">🚨</span>SOS Alerts<span class="nbadge red" id="sidebarSosCount">0</span></div>
+      <div class="ni" onclick="goPage('complaints',this)"><span class="ni-ico">📋</span>Complaints<span class="nbadge red" id="sidebarComplaintCount">0</span></div>
+      <div class="ni" onclick="goPage('chat',this)"><span class="ni-ico">💬</span>Chat Monitor<span class="nbadge grn" id="sidebarChatCount">0</span></div>
+      <div class="nav-lbl">Content</div>
+      <div class="ni" onclick="goPage('announce',this)"><span class="ni-ico">📢</span>Announcements</div>
+      <div class="ni" onclick="goPage('helplines',this)"><span class="ni-ico">📞</span>Helplines</div>
+      <div class="nav-lbl">System</div>
+      <div class="ni" onclick="goPage('settings',this)"><span class="ni-ico">⚙️</span>Settings</div>
+    </nav>
+    <div class="sb-foot">
+      <div class="adm-row">
+        <div class="adm-av">AD</div>
+        <div><div class="adm-n">Admin</div><div class="adm-r">Super Admin</div></div>
+        <button class="lo-btn" onclick="doLogout()" title="Logout">⎋</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- TOPBAR -->
+  <header class="tb">
+    <button class="ham" onclick="toggleSB()">☰</button>
+    <div><span class="tb-title" id="tbt">Dashboard</span><span class="tb-sub" id="tbs">• Overview</span></div>
+    <div class="tb-r">
+      <div class="tb-dot"></div>
+      <span class="tb-time" id="tbt2"></span>
+      <div class="nb-btn">🔔<div class="nb-dot"></div></div>
+      <div class="tb-av">AD</div>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- DASHBOARD -->
+    <div class="pg on" id="pg-dashboard">
+      <div class="pg-hd"><h2>Dashboard Overview</h2><p>Live data from WS App backend</p></div>
+      <div class="sg">
+        <div class="sc"><div class="sc-glow b"></div><div class="sc-top"><div class="sc-ico b">👥</div><span class="sc-tr up" id="dashUsersHint">Live</span></div><div class="sc-num" id="dashboardUsersCount">0</div><div class="sc-lbl">Total Users</div></div>
+        <div class="sc"><div class="sc-glow r"></div><div class="sc-top"><div class="sc-ico r">🚨</div><span class="sc-tr dn" id="dashSosHint">Live</span></div><div class="sc-num" id="dashboardSosCount">0</div><div class="sc-lbl">Active SOS Alerts</div></div>
+        <div class="sc"><div class="sc-glow g"></div><div class="sc-top"><div class="sc-ico g">📋</div><span class="sc-tr up" id="dashComplaintHint">Live</span></div><div class="sc-num" id="dashboardComplaintCount">0</div><div class="sc-lbl">Total Complaints</div></div>
+        <div class="sc"><div class="sc-glow e"></div><div class="sc-top"><div class="sc-ico e">✅</div><span class="sc-tr up" id="dashResolvedHint">Live</span></div><div class="sc-num" id="dashboardResolvedCount">0</div><div class="sc-lbl">Resolved Complaints</div></div>
+        <div class="sc"><div class="sc-glow bl"></div><div class="sc-top"><div class="sc-ico bl">💬</div><span class="sc-tr up" id="dashChatHint">Live</span></div><div class="sc-num" id="dashboardChatCount">0</div><div class="sc-lbl">Chat Sessions</div></div>
+      </div>
+      <div class="g2">
+        <div class="gc cc">
+          <div class="section-row"><h3>📈 SOS Alerts — Last 7 Days</h3><button class="ab vw" onclick="loadDashboard()">↻ Refresh</button></div>
+          <div class="bars" id="sosBars"><div class="empty-state">No SOS alert data yet.</div></div>
+        </div>
+        <div class="gc cc">
+          <div class="section-row"><h3>⚡ Recent Activity</h3><button class="ab vw" onclick="loadDashboard()">↻ Refresh</button></div>
+          <div class="act-list" id="activityList"><div class="empty-state">No activity yet.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- USERS -->
+    <div class="pg" id="pg-users">
+      <div class="pg-hd"><h2>User Management</h2><p>Manage registered users from Firebase</p></div>
+      <div class="gc tc">
+        <div class="tc-hd"><div><h3>👥 All Users</h3><p id="usersSummary">0 registered users</p></div><div class="tc-acts"><button class="tbtn o" onclick="exportUsers()">⬇ Export</button></div></div>
+        <div class="sb-bar"><input class="si" id="userSearch" placeholder="🔍  Search name, phone, email..."/><select class="fsel" id="userFilter"><option value="all">All Status</option><option value="active">Active</option><option value="blocked">Blocked</option></select><button class="ab vw" onclick="loadUsers()">↻ Refresh</button></div>
+        <div class="table-wrap"><table><thead><tr><th>#</th><th>User</th><th>Phone</th><th>Gmail</th><th>Joined</th><th>Status</th><th>Actions</th></tr></thead><tbody id="usersBody"><tr><td colspan="7"><div class="empty-state">Loading real users...</div></td></tr></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- SOS -->
+    <div class="pg" id="pg-sos">
+      <div class="pg-hd"><h2>SOS Alert Management</h2><p>Live emergency alerts stored by the app</p></div>
+      <div class="sg" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px;">
+        <div class="sc"><div class="sc-glow r"></div><div class="sc-top"><div class="sc-ico r">🔴</div><span class="sc-tr dn">Live</span></div><div class="sc-num" id="sosPendingCount">0</div><div class="sc-lbl">Pending Alerts</div></div>
+        <div class="sc"><div class="sc-glow e"></div><div class="sc-top"><div class="sc-ico e">✅</div><span class="sc-tr up">Today</span></div><div class="sc-num" id="sosResolvedToday">0</div><div class="sc-lbl">Resolved Today</div></div>
+        <div class="sc"><div class="sc-glow b"></div><div class="sc-top"><div class="sc-ico b">📊</div></div><div class="sc-num" id="sosMonthCount">0</div><div class="sc-lbl">Total This Month</div></div>
+      </div>
+      <div class="gc" style="padding:22px;">
+        <div class="section-row"><h3>🚨 Alerts</h3><button class="ab vw" onclick="loadSos()">↻ Refresh</button></div>
+        <div id="sosList"><div class="empty-state">Loading real SOS data...</div></div>
+      </div>
+    </div>
+
+    <!-- COMPLAINTS -->
+    <div class="pg" id="pg-complaints">
+      <div class="pg-hd"><h2>Complaint Management</h2><p>Real complaints submitted through WS App</p></div>
+      <div class="gc tc">
+        <div class="tc-hd"><div><h3>📋 All Complaints</h3><p id="complaintSummary">0 complaints</p></div><div class="tc-acts"><button class="tbtn o" onclick="exportComplaints()">⬇ Export</button><button class="ab vw" onclick="loadComplaints()">↻ Refresh</button></div></div>
+        <div class="sb-bar"><input class="si" id="complaintSearch" placeholder="🔍  Search complaint..."/><select class="fsel" id="complaintFilter"><option value="all">All Status</option><option value="pending">Pending</option><option value="review">Under Review</option><option value="resolved">Resolved</option></select></div>
+        <div class="table-wrap"><table><thead><tr><th>#</th><th>User</th><th>Category</th><th>Description</th><th>Created</th><th>Status</th><th>Action</th></tr></thead><tbody id="complaintsBody"><tr><td colspan="7"><div class="empty-state">Loading real complaints...</div></td></tr></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- CHAT MONITOR -->
+    <div class="pg" id="pg-chat">
+      <div class="pg-hd"><h2>AI Chat Monitor</h2><p>Real support sessions recorded by WS App</p></div>
+      <div class="gc tc">
+        <div class="tc-hd"><div><h3>💬 Recent Sessions</h3><p id="chatSummary">0 sessions</p></div><div class="tc-acts"><button class="ab vw" onclick="loadChat()">↻ Refresh</button></div></div>
+        <div class="table-wrap"><table><thead><tr><th>#</th><th>User</th><th>First Message</th><th>Time</th><th>Status</th><th>Action</th></tr></thead><tbody id="chatBody"><tr><td colspan="6"><div class="empty-state">Loading real chat data...</div></td></tr></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- ANNOUNCEMENTS -->
+    <div class="pg" id="pg-announce">
+      <div class="pg-hd"><h2>Announcements</h2><p>Store and manage announcements in Firestore</p></div>
+      <div class="gc" style="padding:22px;">
+        <div class="section-row"><h3>📢 Published Announcements</h3><button class="ab vw" onclick="loadAnnouncements()">↻ Refresh</button></div>
+        <div id="announcementList"><div class="empty-state">Loading real announcements...</div></div>
+        <div class="af" style="margin-top:20px;">
+          <h4>➕ Add New Announcement</h4>
+          <div class="fr"><div class="ff"><label>Title</label><input type="text" id="announcementTitle" placeholder="Announcement title..."/></div><div class="ff"><label>Date</label><input type="date" id="announcementDate"/></div></div>
+          <div class="ff"><label>Description</label><textarea id="announcementDescription" placeholder="Write content here..."></textarea></div>
+          <button class="fsub" onclick="createAnnouncement()">📢 Publish Announcement</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- HELPLINES -->
+    <div class="pg" id="pg-helplines">
+      <div class="pg-hd"><h2>Helpline Management</h2><p>Numbers stored in Firestore and used by the app</p></div>
+      <div class="gc tc">
+        <div class="tc-hd"><div><h3>📞 Current Helplines</h3><p id="helplineSummary">0 helplines</p></div><div class="tc-acts"><button class="ab vw" onclick="loadHelplines()">↻ Refresh</button></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Icon</th><th>Name</th><th>Number</th><th>Category</th><th>Status</th><th>Action</th></tr></thead><tbody id="helplinesBody"><tr><td colspan="6"><div class="empty-state">Loading real helplines...</div></td></tr></tbody></table></div>
+        <div class="af" style="margin:20px;">
+          <h4>➕ Add New Helpline</h4>
+          <div class="fr"><div class="ff"><label>Name</label><input type="text" id="helplineName" placeholder="e.g. Women Helpline"/></div><div class="ff"><label>Number</label><input type="text" id="helplineNumber" placeholder="e.g. 1091"/></div></div>
+          <div class="fr"><div class="ff"><label>Category</label><select id="helplineCategory"><option>Emergency</option><option>Mental Health</option><option>Medical</option><option>Legal</option><option>Cyber</option><option>Support</option></select></div><div class="ff"><label>Icon (Emoji)</label><input type="text" id="helplineIcon" placeholder="📞"/></div></div>
+          <button class="fsub" onclick="createHelpline()">➕ Add Helpline</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="pg" id="pg-settings">
+      <div class="pg-hd"><h2>Settings</h2><p>Configuration stored in Firestore</p></div>
+      <div class="gc" style="padding:24px;">
+        <h3 style="font-size:14px;font-weight:800;color:var(--w);margin-bottom:20px;">⚙️ Admin Configuration</h3>
+        <div class="fr"><div class="ff"><label>Admin ID / Phone</label><input type="text" id="settingAdminId" placeholder="Admin login ID"/></div><div class="ff"><label>Admin Name</label><input type="text" id="settingName" placeholder="Admin name"/></div></div>
+        <div class="fr"><div class="ff"><label>Phone</label><input type="text" id="settingPhone" placeholder="Phone number"/></div><div class="ff"><label>Email</label><input type="email" id="settingEmail" placeholder="Admin email"/></div></div>
+        <div class="fr"><div class="ff"><label>Current Password</label><input type="password" id="currentPassword" placeholder="Current password"/></div><div class="ff"><label>App Version</label><input type="text" id="settingVersion" readonly style="opacity:0.6;"/></div></div>
+        <div class="fr"><div class="ff"><label>New Password</label><input type="password" id="newPassword" placeholder="Leave blank to keep current"/></div><div class="ff"><label>Confirm New Password</label><input type="password" id="confirmPassword" placeholder="Repeat new password"/></div></div>
+        <button class="fsub" onclick="saveSettings()">🔐 Save Admin Account Changes</button>
+        <div class="data-note">🔒 Password is stored only as a secure server-side hash. After changing login details, you will be logged out and must sign in again.</div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+
+
+<!-- USER DETAILS MODAL -->
+<div class="umodal" id="userModal" onclick="closeUserModal(event)">
+  <div class="umodal-card" onclick="event.stopPropagation()">
+    <div class="umodal-hd">
+      <h3>👤 User Details</h3>
+      <button class="umodal-close" onclick="closeUserModal()">×</button>
+    </div>
+    <div class="umodal-body" id="userModalBody"></div>
+  </div>
+</div>
+
+<script>
+const API_BASE = 'http://127.0.0.1:5000';
+let adminToken = sessionStorage.getItem('wsAdminToken') || '';
+let allUsers = [], allComplaints = [], allSos = [], allChat = [], allAnnouncements = [], allHelplines = [];
+
+function esc(v){const d=document.createElement('div');d.textContent=v??'';return d.innerHTML;}
+function initials(name){return (name||'U').trim().split(/\s+/).slice(0,2).map(x=>x[0]).join('').toUpperCase() || 'U';}
+function asDate(value){
+  if(!value) return null;
+  if(typeof value==='string') return new Date(value);
+  if(value.seconds) return new Date(value.seconds*1000);
+  return null;
+}
+function fmtDate(value){const d=asDate(value);return d&&!isNaN(d)?d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}):'—';}
+function fmtDateTime(value){const d=asDate(value);return d&&!isNaN(d)?d.toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'—';}
+function sameDay(a,b){const x=asDate(a),y=asDate(b);return x&&y&&x.toDateString()===y.toDateString();}
+function statusClass(status){return String(status||'active').toLowerCase().replace(/\s+/g,'_');}
+function showModal(title,body){
+  let m=document.getElementById('dataModal');
+  if(!m){m=document.createElement('div');m.id='dataModal';m.className='modal-backdrop';m.onclick=e=>{if(e.target===m)m.classList.remove('on')};m.innerHTML='<div class="data-modal"><button class="ab vw" style="float:right" onclick="document.getElementById(\'dataModal\').classList.remove(\'on\')">✕</button><div id="modalInner"></div></div>';document.body.appendChild(m);}
+  document.getElementById('modalInner').innerHTML='<h3>'+esc(title)+'</h3>'+body;
+  m.classList.add('on');
+}
+async function api(path, options={}){
+  const headers={'Content-Type':'application/json',...(options.headers||{})};
+  if(adminToken) headers.Authorization='Bearer '+adminToken;
+  const res=await fetch(API_BASE+path,{...options,headers});
+  let data={}; try{data=await res.json();}catch{}
+  if(res.status===401 && path.startsWith('/api/admin/')){ adminToken=''; sessionStorage.removeItem('wsAdminToken'); }
+  if(!res.ok || data.success===false) throw new Error(data.message||data.error||('HTTP '+res.status));
+  return data;
+}
+function errRow(colspan,msg){return '<tr><td colspan="'+colspan+'"><div class="error-state">⚠️ '+esc(msg)+'<br><button class="ab vw" style="margin-top:10px" onclick="location.reload()">Retry</button></div></td></tr>';}
+
+async function loadUsers(){
+  const body=document.getElementById('usersBody');
+  if(body) body.innerHTML='<tr><td colspan="7"><div class="empty-state">Loading real users...</div></td></tr>';
+  try{const data=await api('/api/admin/users');allUsers=data.users||[];renderUsers();document.getElementById('dashboardUsersCount').textContent=allUsers.length;document.getElementById('sidebarUsersCount').textContent=allUsers.length;}
+  catch(e){if(body)body.innerHTML=errRow(7,e.message+' — make sure Flask backend is running.');}
+}
+function userStatus(u){return u.status==='blocked'?'Blocked':'Active';}
+function renderUsers(){
+  const body=document.getElementById('usersBody'); if(!body)return;
+  const q=(document.getElementById('userSearch')?.value||'').trim().toLowerCase(); const f=document.getElementById('userFilter')?.value||'all';
+  const filtered=allUsers.filter(u=>{const st=userStatus(u).toLowerCase();const text=[u.fullName,u.phone,u.email,u.uid].join(' ').toLowerCase();return (!q||text.includes(q))&&(f==='all'||(f==='active'&&st==='active')||(f==='blocked'&&st==='blocked'));});
+  document.getElementById('usersSummary').textContent=allUsers.length+' registered users';
+  if(!filtered.length){body.innerHTML='<tr><td colspan="7"><div class="empty-state">No real users found.</div></td></tr>';return;}
+  body.innerHTML=filtered.map((u,i)=>{
+    const blocked=userStatus(u)==='Blocked'; const action=blocked?'Unblock':'Block';
+    return `<tr><td style="color:rgba(255,255,255,.3)">${String(i+1).padStart(3,'0')}</td><td><div class="uc"><div class="uav b">${esc(initials(u.fullName))}</div><div><div class="un">${esc(u.fullName||'Unnamed User')}</div><div class="up2">WS App User</div></div></div></td><td>${esc(u.phone||'—')}</td><td>${esc(u.email||'—')}</td><td>${fmtDate(u.createdAt)}</td><td><span class="bdg ${blocked?'blk':'act'}">${blocked?'✕ Blocked':'● Active'}</span></td><td><div class="action-group"><button class="ab vw" onclick="viewUser('${esc(u.uid)}')">View</button><button class="ab ${blocked?'rs success-btn':'bl2 danger-btn'}" onclick="toggleUser('${esc(u.uid)}',${blocked})">${action}</button></div></td></tr>`;
+  }).join('');
+}
+function viewUser(uid){const u=allUsers.find(x=>x.uid===uid);if(!u)return;showModal('User Details','<div class="meta">Firebase user record</div><div class="kv-grid"><div class="kv"><span>Full Name</span><strong>'+esc(u.fullName||'—')+'</strong></div><div class="kv"><span>Phone</span><strong>'+esc(u.phone||'—')+'</strong></div><div class="kv"><span>Email</span><strong>'+esc(u.email||'—')+'</strong></div><div class="kv"><span>Status</span><strong>'+esc(userStatus(u))+'</strong></div><div class="kv"><span>Joined</span><strong>'+fmtDateTime(u.createdAt)+'</strong></div><div class="kv"><span>UID</span><strong>'+esc(u.uid||'—')+'</strong></div></div><div class="data-note">🔒 Password is never displayed. Firebase Authentication manages passwords securely.</div>');}
+async function toggleUser(uid,blocked){
+  const u=allUsers.find(x=>x.uid===uid); if(!u)return; const action=blocked?'Unblock':'Block'; if(!confirm(action+' '+(u.fullName||'this user')+'?'))return;
+  try{await api('/api/admin/users/'+encodeURIComponent(uid)+'/status',{method:'PATCH',body:JSON.stringify({blocked:!blocked})});await loadUsers();}catch(e){alert(e.message);}
+}
+function exportUsers(){const rows=[['UID','Full Name','Phone','Email','Joined','Status'],...allUsers.map(u=>[u.uid,u.fullName,u.phone,u.email,fmtDateTime(u.createdAt),userStatus(u)])];downloadCsv('ws-app-users.csv',rows);}
+
+async function loadDashboard(){
+  try{const d=await api('/api/admin/dashboard');
+    document.getElementById('dashboardUsersCount').textContent=d.totalUsers??0;
+    document.getElementById('dashboardSosCount').textContent=d.activeSos??0;
+    document.getElementById('dashboardComplaintCount').textContent=d.totalComplaints??0;
+    document.getElementById('dashboardResolvedCount').textContent=d.resolvedComplaints??0;
+    document.getElementById('dashboardChatCount').textContent=d.chatSessions??0;
+    document.getElementById('dashSosHint').textContent=(d.activeSos??0)+' Active';
+    document.getElementById('dashComplaintHint').textContent=(d.pendingComplaints??0)+' Pending';
+    document.getElementById('dashResolvedHint').textContent='Live';
+    document.getElementById('dashChatHint').textContent='Live';
+    document.getElementById('sidebarUsersCount').textContent=d.totalUsers??0;
+    document.getElementById('sidebarSosCount').textContent=d.activeSos??0;
+    document.getElementById('sidebarComplaintCount').textContent=d.pendingComplaints??0;
+    document.getElementById('sidebarChatCount').textContent=d.chatSessions??0;
+    renderBars(d.sosLast7Days||[]);renderActivity(d.recentActivity||[]);
+  }catch(e){document.getElementById('sosBars').innerHTML='<div class="error-state">'+esc(e.message)+'</div>';}
+}
+function renderBars(items){const el=document.getElementById('sosBars');if(!items.length){el.innerHTML='<div class="empty-state">No SOS alert data yet.</div>';return;}const max=Math.max(...items.map(x=>x.count||0),1);el.innerHTML=items.map(x=>`<div class="bw"><div class="bval">${x.count||0}</div><div class="bar" style="height:${Math.max(4,((x.count||0)/max)*100)}%;background:linear-gradient(180deg,var(--b),var(--bd));"></div><div class="blbl">${esc(x.label)}</div></div>`).join('');}
+function renderActivity(items){const el=document.getElementById('activityList');if(!items.length){el.innerHTML='<div class="empty-state">No activity yet.</div>';return;}el.innerHTML=items.map(x=>`<div class="act-i"><div class="act-d" style="background:${x.type==='sos'?'var(--red)':x.type==='complaint'?'var(--g)':x.type==='user'?'var(--em)':x.type==='chat'?'var(--blue)':'var(--b)'}"></div><div class="act-txt"><strong>${esc(x.title||'System')}</strong> ${esc(x.message||'')}</div><div class="act-tm">${esc(fmtDateTime(x.createdAt))}</div></div>`).join('');}
+
+async function loadSos(){
+  const el=document.getElementById('sosList');el.innerHTML='<div class="empty-state">Loading real SOS data...</div>';
+  try{const d=await api('/api/admin/sos');allSos=d.alerts||[];document.getElementById('sosPendingCount').textContent=d.pending||0;document.getElementById('sosResolvedToday').textContent=d.resolvedToday||0;document.getElementById('sosMonthCount').textContent=d.monthTotal||0;document.getElementById('sidebarSosCount').textContent=d.pending||0;document.getElementById('dashboardSosCount').textContent=d.pending||0;
+    if(!allSos.length){el.innerHTML='<div class="empty-state">No real SOS alerts have been recorded yet.</div>';return;}
+    el.innerHTML=allSos.map(a=>{const st=String(a.status||'pending').toLowerCase();const resolved=st==='resolved';return `<div class="alc ${resolved?'safe':'crit'}"><div class="al-ico ${resolved?'g':'r'}">${resolved?'✅':'🆘'}</div><div class="al-info"><div class="al-name">${esc(a.fullName||a.userName||'Unknown User')}</div><div class="al-loc">📍 ${esc(a.address||a.locationText||'Location not provided')} ${a.latitude!=null&&a.longitude!=null?`— ${esc(a.latitude)}°, ${esc(a.longitude)}°`:''}</div><div class="al-t">🕐 ${esc(fmtDateTime(a.createdAt))} • ${esc(a.phone||'')}</div></div><div class="al-acts"><span class="bdg ${resolved?'res':'crit'}">${resolved?'✅ RESOLVED':'🔴 '+(st.toUpperCase())}</span>${a.latitude!=null&&a.longitude!=null?`<button class="ab vw" onclick="window.open('https://www.google.com/maps?q=${encodeURIComponent(a.latitude)},${encodeURIComponent(a.longitude)}','_blank')">📍 Map</button>`:''}${resolved?'':`<button class="ab rs" onclick="resolveSos('${esc(a.id)}')">✅ Resolve</button>`}<button class="ab vw" onclick="viewSos('${esc(a.id)}')">View</button></div></div>`}).join('');
+  }catch(e){el.innerHTML=errRow(1,e.message);}
+}
+function viewSos(id){const a=allSos.find(x=>x.id===id);if(!a)return;showModal('SOS Alert','<div class="meta">Real emergency record</div><div class="kv-grid"><div class="kv"><span>User</span><strong>'+esc(a.fullName||a.userName||'—')+'</strong></div><div class="kv"><span>Phone</span><strong>'+esc(a.phone||'—')+'</strong></div><div class="kv"><span>Status</span><strong>'+esc(a.status||'—')+'</strong></div><div class="kv"><span>Created</span><strong>'+fmtDateTime(a.createdAt)+'</strong></div><div class="kv"><span>Latitude</span><strong>'+esc(a.latitude??'—')+'</strong></div><div class="kv"><span>Longitude</span><strong>'+esc(a.longitude??'—')+'</strong></div><div class="kv" style="grid-column:1/-1"><span>Location</span><strong>'+esc(a.address||a.locationText||'—')+'</strong></div></div>');}
+async function resolveSos(id){if(!confirm('Mark this SOS alert as resolved?'))return;try{await api('/api/admin/sos/'+encodeURIComponent(id)+'/status',{method:'PATCH',body:JSON.stringify({status:'resolved'})});await loadSos();await loadDashboard();}catch(e){alert(e.message);}}
+
+async function loadComplaints(){const body=document.getElementById('complaintsBody');body.innerHTML='<tr><td colspan="7"><div class="empty-state">Loading real complaints...</div></td></tr>';try{const d=await api('/api/admin/complaints');allComplaints=d.complaints||[];renderComplaints();document.getElementById('complaintSummary').textContent=(d.total||0)+' complaints • '+(d.pending||0)+' pending';document.getElementById('dashboardComplaintCount').textContent=d.total||0;document.getElementById('dashboardResolvedCount').textContent=d.resolved||0;document.getElementById('sidebarComplaintCount').textContent=d.pending||0;}catch(e){body.innerHTML=errRow(7,e.message);}}
+function renderComplaints(){const body=document.getElementById('complaintsBody');const q=(document.getElementById('complaintSearch')?.value||'').toLowerCase();const f=document.getElementById('complaintFilter')?.value||'all';const rows=allComplaints.filter(c=>{const st=String(c.status||'pending').toLowerCase().replace(/\s+/g,'_');const text=[c.fullName,c.category,c.description,c.subject,c.id].join(' ').toLowerCase();return (!q||text.includes(q))&&(f==='all'||(f==='review'&&st==='under_review')||st===f);});if(!rows.length){body.innerHTML='<tr><td colspan="7"><div class="empty-state">No real complaints found.</div></td></tr>';return;}body.innerHTML=rows.map((c,i)=>{const st=String(c.status||'pending').toLowerCase();return `<tr><td style="color:rgba(255,255,255,.3)">${String(i+1).padStart(3,'0')}</td><td>${esc(c.fullName||c.userName||'Anonymous')}</td><td>${esc(c.category||'—')}</td><td style="max-width:360px;white-space:normal;color:rgba(255,255,255,.6)">${esc(c.description||c.subject||'—')}</td><td>${fmtDateTime(c.createdAt)}</td><td><span class="bdg ${st==='resolved'?'res':st==='under review'?'mon':'pnd'}">${esc(st.toUpperCase())}</span></td><td><button class="ab vw" onclick="viewComplaint('${esc(c.id)}')">View</button> ${st!=='resolved'?`<button class="ab rs" onclick="resolveComplaint('${esc(c.id)}')">Resolve</button>`:''}</td></tr>`}).join('');}
+function viewComplaint(id){const c=allComplaints.find(x=>x.id===id);if(!c)return;showModal('Complaint','<div class="meta">Real complaint record</div><div class="kv-grid"><div class="kv"><span>User</span><strong>'+esc(c.fullName||c.userName||'Anonymous')+'</strong></div><div class="kv"><span>Category</span><strong>'+esc(c.category||'—')+'</strong></div><div class="kv"><span>Status</span><strong>'+esc(c.status||'—')+'</strong></div><div class="kv"><span>Created</span><strong>'+fmtDateTime(c.createdAt)+'</strong></div><div class="kv" style="grid-column:1/-1"><span>Description</span><strong>'+esc(c.description||c.subject||'—')+'</strong></div></div>');}
+async function resolveComplaint(id){if(!confirm('Mark this complaint as resolved?'))return;try{await api('/api/admin/complaints/'+encodeURIComponent(id)+'/status',{method:'PATCH',body:JSON.stringify({status:'resolved'})});await loadComplaints();await loadDashboard();}catch(e){alert(e.message);}}
+function exportComplaints(){downloadCsv('ws-app-complaints.csv',[['ID','User','Category','Description','Created','Status'],...allComplaints.map(c=>[c.id,c.fullName||c.userName||'Anonymous',c.category||'',c.description||c.subject||'',fmtDateTime(c.createdAt),c.status||'pending'])]);}
+
+async function loadChat(){const body=document.getElementById('chatBody');body.innerHTML='<tr><td colspan="6"><div class="empty-state">Loading real chat data...</div></td></tr>';try{const d=await api('/api/admin/chat');allChat=d.sessions||[];document.getElementById('chatSummary').textContent=(d.total||0)+' sessions';document.getElementById('dashboardChatCount').textContent=d.total||0;document.getElementById('sidebarChatCount').textContent=d.today||d.total||0;if(!allChat.length){body.innerHTML='<tr><td colspan="6"><div class="empty-state">No real chat sessions recorded yet.</div></td></tr>';return;}body.innerHTML=allChat.map((c,i)=>`<tr><td>${String(i+1).padStart(3,'0')}</td><td>${esc(c.fullName||c.userName||'Anonymous')}</td><td style="max-width:420px;white-space:normal;color:rgba(255,255,255,.6)">${esc(c.firstMessage||'—')}</td><td>${fmtDateTime(c.createdAt)}</td><td><span class="bdg ${String(c.status||'safe').toLowerCase()==='crisis'?'crit':String(c.status||'safe').toLowerCase()==='monitor'?'mon':'saf'}">${esc((c.status||'safe').toUpperCase())}</span></td><td><button class="ab vw" onclick="viewChat('${esc(c.id)}')">View</button></td></tr>`).join('');}catch(e){body.innerHTML=errRow(6,e.message);}}
+function viewChat(id){const c=allChat.find(x=>x.id===id);if(!c)return;showModal('Chat Session','<div class="meta">Real support session record</div><div class="kv-grid"><div class="kv"><span>User</span><strong>'+esc(c.fullName||c.userName||'Anonymous')+'</strong></div><div class="kv"><span>Status</span><strong>'+esc(c.status||'—')+'</strong></div><div class="kv"><span>Started</span><strong>'+fmtDateTime(c.createdAt)+'</strong></div><div class="kv"><span>Session ID</span><strong>'+esc(c.id||'—')+'</strong></div><div class="kv" style="grid-column:1/-1"><span>First Message</span><strong>'+esc(c.firstMessage||'—')+'</strong></div></div>');}
+
+async function loadAnnouncements(){const el=document.getElementById('announcementList');el.innerHTML='<div class="empty-state">Loading real announcements...</div>';try{const d=await api('/api/admin/announcements');allAnnouncements=d.announcements||[];if(!allAnnouncements.length){el.innerHTML='<div class="empty-state">No real announcements published yet.</div>';return;}el.innerHTML=allAnnouncements.map(a=>`<div class="anc"><div class="an-ico">${esc(a.icon||'📢')}</div><div class="an-inf"><div class="an-t">${esc(a.title||'Untitled')}</div><div class="an-s">${esc(a.description||'')}</div><div class="up2">${fmtDateTime(a.date||a.createdAt)}</div></div><div class="an-acts"><button class="ab dl danger-btn" onclick="deleteAnnouncement('${esc(a.id)}')">Delete</button></div></div>`).join('');}catch(e){el.innerHTML='<div class="error-state">⚠️ '+esc(e.message)+'</div>';}}
+async function createAnnouncement(){const title=document.getElementById('announcementTitle').value.trim();const description=document.getElementById('announcementDescription').value.trim();const date=document.getElementById('announcementDate').value;if(!title||!description){alert('Title and description are required.');return;}try{await api('/api/admin/announcements',{method:'POST',body:JSON.stringify({title,description,date,icon:'📢'})});document.getElementById('announcementTitle').value='';document.getElementById('announcementDescription').value='';document.getElementById('announcementDate').value='';await loadAnnouncements();}catch(e){alert(e.message);}}
+async function deleteAnnouncement(id){if(!confirm('Delete this announcement?'))return;try{await api('/api/admin/announcements/'+encodeURIComponent(id),{method:'DELETE'});await loadAnnouncements();}catch(e){alert(e.message);}}
+
+async function loadHelplines(){const body=document.getElementById('helplinesBody');body.innerHTML='<tr><td colspan="6"><div class="empty-state">Loading real helplines...</div></td></tr>';try{const d=await api('/api/admin/helplines');allHelplines=d.helplines||[];document.getElementById('helplineSummary').textContent=allHelplines.length+' helplines';if(!allHelplines.length){body.innerHTML='<tr><td colspan="6"><div class="empty-state">No real helplines configured yet.</div></td></tr>';return;}body.innerHTML=allHelplines.map(h=>`<tr><td>${esc(h.icon||'📞')}</td><td>${esc(h.name||'—')}</td><td><strong style="color:var(--g)">${esc(h.number||'—')}</strong></td><td>${esc(h.category||'—')}</td><td><span class="bdg ${h.active===false?'blk':'act'}">${h.active===false?'Blocked':'Active'}</span></td><td><button class="ab vw" onclick="toggleHelpline('${esc(h.id)}',${h.active!==false})">${h.active===false?'Enable':'Disable'}</button></td></tr>`).join('');}catch(e){body.innerHTML=errRow(6,e.message);}}
+async function createHelpline(){const name=document.getElementById('helplineName').value.trim();const number=document.getElementById('helplineNumber').value.trim();const category=document.getElementById('helplineCategory').value;const icon=document.getElementById('helplineIcon').value.trim()||'📞';if(!name||!number){alert('Name and number are required.');return;}try{await api('/api/admin/helplines',{method:'POST',body:JSON.stringify({name,number,category,icon,active:true})});['helplineName','helplineNumber','helplineIcon'].forEach(id=>document.getElementById(id).value='');await loadHelplines();}catch(e){alert(e.message);}}
+async function toggleHelpline(id,active){try{await api('/api/admin/helplines/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({active:!active})});await loadHelplines();}catch(e){alert(e.message);}}
+
+async function loadSettings(){try{const d=await api('/api/admin/settings');const s=d.settings||{};document.getElementById('settingAdminId').value=s.adminId||'';document.getElementById('settingName').value=s.adminName||'';document.getElementById('settingPhone').value=s.phone||'';document.getElementById('settingEmail').value=s.email||'';document.getElementById('settingVersion').value=s.appVersion||'v1.0.0';}catch(e){console.error(e);}}
+async function saveSettings(){try{const payload={adminId:document.getElementById('settingAdminId').value.trim(),adminName:document.getElementById('settingName').value.trim(),phone:document.getElementById('settingPhone').value.trim(),email:document.getElementById('settingEmail').value.trim(),appVersion:document.getElementById('settingVersion').value.trim(),currentPassword:document.getElementById('currentPassword').value,newPassword:document.getElementById('newPassword').value,confirmPassword:document.getElementById('confirmPassword').value};const d=await api('/api/admin/settings',{method:'PUT',body:JSON.stringify(payload)});alert(d.message||'Admin account updated successfully.');adminToken='';sessionStorage.removeItem('wsAdminToken');document.getElementById('shell').classList.remove('on');document.getElementById('loginScreen').style.display='flex';document.getElementById('lid').value=payload.adminId;document.getElementById('lpwd').value='';['currentPassword','newPassword','confirmPassword'].forEach(id=>document.getElementById(id).value='');}catch(e){alert(e.message);}}
+
+function downloadCsv(name,rows){const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),500);}
+
+function tick(){const n=new Date();document.getElementById('tbt2').textContent=n.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})+' • '+n.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});}tick();setInterval(tick,1000);
+
+async function doLogin(){const id=document.getElementById('lid').value.trim();const pw=document.getElementById('lpwd').value;const er=document.getElementById('lerr');if(!id||!pw){er.textContent='⚠️ Enter Admin ID and password.';er.style.display='block';return;}try{const r=await api('/api/admin/login',{method:'POST',body:JSON.stringify({adminId:id,password:pw})});adminToken=r.token;sessionStorage.setItem('wsAdminToken',adminToken);document.getElementById('loginScreen').style.display='none';document.getElementById('shell').classList.add('on');er.style.display='none';document.getElementById('lid').value='';document.getElementById('lpwd').value='';loadDashboard();loadUsers();loadSettings();}catch(e){er.textContent='⚠️ '+e.message;er.style.display='block';}}
+document.getElementById('lpwd').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+async function doLogout(){if(confirm('Logout from WS Admin Panel?')){try{if(adminToken) await api('/api/admin/logout',{method:'POST'});}catch{}adminToken='';sessionStorage.removeItem('wsAdminToken');document.getElementById('shell').classList.remove('on');document.getElementById('loginScreen').style.display='flex';}}
+const titles={dashboard:['Dashboard','• Live Overview'],users:['User Management','• Firebase Users'],sos:['SOS Alerts','• Live Monitoring'],complaints:['Complaints','• Real Records'],chat:['AI Chat Monitor','• Session Logs'],announce:['Announcements','• Firestore Content'],helplines:['Helplines','• Firestore Numbers'],settings:['Settings','• Configuration']};
+function goPage(id,el){document.querySelectorAll('.pg').forEach(p=>p.classList.remove('on'));document.querySelectorAll('.ni').forEach(n=>n.classList.remove('on'));document.getElementById('pg-'+id).classList.add('on');if(el)el.classList.add('on');const[t,s]=titles[id]||['Admin',''];document.getElementById('tbt').textContent=t;document.getElementById('tbs').textContent=s;closeSB();if(id==='dashboard')loadDashboard();if(id==='users')loadUsers();if(id==='sos')loadSos();if(id==='complaints')loadComplaints();if(id==='chat')loadChat();if(id==='announce')loadAnnouncements();if(id==='helplines')loadHelplines();if(id==='settings')loadSettings();}
+function toggleSB(){document.getElementById('sb').classList.toggle('op');document.getElementById('ov').classList.toggle('op');}function closeSB(){document.getElementById('sb').classList.remove('op');document.getElementById('ov').classList.remove('op');}
+
+document.addEventListener('DOMContentLoaded',()=>{document.getElementById('userSearch')?.addEventListener('input',renderUsers);document.getElementById('userFilter')?.addEventListener('change',renderUsers);document.getElementById('complaintSearch')?.addEventListener('input',renderComplaints);document.getElementById('complaintFilter')?.addEventListener('change',renderComplaints);});
+</script>
+</body>
+</html>
