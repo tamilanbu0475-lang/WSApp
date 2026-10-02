@@ -27,14 +27,15 @@ export default function AlertScreen() {
   const [elapsed, setElapsed] = useState(0);
   const [location, setLocation] = useState({ latitude: null as number | null, longitude: null as number | null, accuracy: null as number | null, text: 'Getting your live location...' });
   const [police, setPolice] = useState({ name: 'Finding nearest police station...', address: 'Please wait...', distanceKm: null as number | null, mapsUrl: '' });
+  const [sosSaved, setSosSaved] = useState(false);
+  const locationWatchRef = useRef<any>(null);
+  const policeTimerRef = useRef<any>(null);
   const alertIdRef = useRef<string | null>(null);
   const createdRef = useRef(false);
 
   const inputs    = [useRef<TextInput>(null), useRef<TextInput>(null), useRef<TextInput>(null), useRef<TextInput>(null)];
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const safeOpacity = useRef(new Animated.Value(0)).current;
-  const locationWatchRef = useRef<any>(null);
-  const lastPoliceKeyRef = useRef('');
 
   // ── BLOCK BACK BUTTON until safe ──────────
   useFocusEffect(
@@ -48,7 +49,8 @@ export default function AlertScreen() {
     }, [safe])
   );
 
-  const API_URL = Platform.OS === 'web' ? 'http://127.0.0.1:5000' : 'http://10.81.141.192:5000';
+  const API_URL =
+    process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
 
   const getStoredUser = () => {
     try {
@@ -77,75 +79,117 @@ export default function AlertScreen() {
     } catch { return null; }
   };
 
-  const fetchNearestPolice = async (latitude: number, longitude: number, accuracy: number | null) => {
-    const key = `${latitude.toFixed(4)},${longitude.toFixed(4)}`;
-    if (lastPoliceKeyRef.current === key) return;
-    lastPoliceKeyRef.current = key;
+  const updateRealSosLocation = async (coords: { latitude: number; longitude: number; accuracy?: number | null; policeStation?: string; policeAddress?: string; policeDistanceKm?: number | null }) => {
+    if (!alertIdRef.current) return;
     try {
-      const res = await fetch(`${API_URL}/api/police/nearest?lat=${latitude}&lon=${longitude}`);
-      const data = await res.json();
-      if (res.ok && data?.success && data?.police) {
-        const p = data.police;
-        setPolice({
-          name: p.name || 'Nearest Police Station',
-          address: p.address || 'Address unavailable',
-          distanceKm: typeof p.distanceKm === 'number' ? p.distanceKm : null,
-          mapsUrl: p.mapsUrl || `https://www.google.com/maps/search/?api=1&query=${p.latitude},${p.longitude}`,
-        });
-        updateRealSosLocation({
-          latitude,
-          longitude,
-          accuracy: accuracy ?? undefined,
-          policeStation: p.name || '',
-          policeAddress: p.address || '',
-          policeDistanceKm: typeof p.distanceKm === 'number' ? p.distanceKm : null,
-        });
-      }
-    } catch {
-      // Keep the SOS active even if the external police directory is unavailable.
-    }
+      await fetch(`${API_URL}/api/sos/${encodeURIComponent(alertIdRef.current)}/location`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(coords),
+      });
+    } catch {}
   };
 
-  const applyLivePosition = (latitude: number, longitude: number, accuracy: number | null) => {
-    setLocation({ latitude, longitude, accuracy, text: 'Live GPS location' });
-    updateRealSosLocation({ latitude, longitude, accuracy: accuracy ?? undefined });
-    fetchNearestPolice(latitude, longitude, accuracy);
+  const loadNearestPolice = async (latitude: number, longitude: number) => {
+    const fallbackUrl = `https://www.google.com/maps/search/?api=1&query=police+station+near+${latitude},${longitude}`;
+    setPolice({
+      name: 'Finding nearest police station...',
+      address: 'Searching from your live GPS location',
+      distanceKm: null,
+      mapsUrl: fallbackUrl,
+    });
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        const res = await fetch(
+          `${API_URL}/api/police/nearest?lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}`,
+          { signal: controller.signal }
+        );
+        clearTimeout(timeoutId);
+
+        const data = await res.json();
+        if (res.ok && data?.success && data.police) {
+          const p = data.police;
+          const station = {
+            name: p.name || 'Police Station',
+            address: p.address || 'Nearby police station',
+            distanceKm: typeof p.distanceKm === 'number' ? p.distanceKm : null,
+            mapsUrl:
+              p.mapsUrl ||
+              `https://www.google.com/maps/search/?api=1&query=${p.latitude},${p.longitude}`,
+          };
+
+          setPolice(station);
+
+          await updateRealSosLocation({
+            latitude,
+            longitude,
+            accuracy: location.accuracy,
+            policeStation: station.name,
+            policeAddress: station.address,
+            policeDistanceKm: station.distanceKm,
+          });
+
+          return;
+        }
+      } catch {}
+
+      if (attempt === 1) {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+      }
+    }
+
+    setPolice({
+      name: 'Police station search unavailable',
+      address: 'Use Google Maps below to search nearby stations',
+      distanceKm: null,
+      mapsUrl: fallbackUrl,
+    });
+  };
+
+  const applyLocation = (latitude: number, longitude: number, accuracy?: number | null) => {
+    const acc = typeof accuracy === 'number' ? accuracy : null;
+    setLocation({ latitude, longitude, accuracy: acc, text: acc != null ? 'Live GPS location' : 'Live GPS location' });
+    updateRealSosLocation({ latitude, longitude, accuracy: acc });
+    if (policeTimerRef.current) clearTimeout(policeTimerRef.current);
+    policeTimerRef.current = setTimeout(() => loadNearestPolice(latitude, longitude), 150);
   };
 
   const getLiveLocation = async () => {
     if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => applyLivePosition(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
-        () => setLocation(prev => ({ ...prev, text: 'Location permission not available' })),
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      const watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          applyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+          if (typeof pos.coords.accuracy === 'number' && pos.coords.accuracy <= 50) {
+            navigator.geolocation.clearWatch(watchId);
+            locationWatchRef.current = null;
+          }
+        },
+        () => setLocation({ latitude: null, longitude: null, accuracy: null, text: 'Location permission not available' }),
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
       );
-      // Keep refining the position while SOS is active; no waiting is required.
-      try {
-        locationWatchRef.current = navigator.geolocation.watchPosition(
-          (pos) => applyLivePosition(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
-          () => {},
-          { enableHighAccuracy: true, maximumAge: 0, timeout: 8000 }
-        );
-      } catch {}
+      locationWatchRef.current = watchId;
+      setTimeout(() => {
+        if (locationWatchRef.current != null) {
+          navigator.geolocation.clearWatch(locationWatchRef.current);
+          locationWatchRef.current = null;
+        }
+      }, 15000);
       return;
     }
 
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        setLocation(prev => ({ ...prev, text: 'Location permission denied' }));
+        setLocation({ latitude: null, longitude: null, accuracy: null, text: 'Location permission denied' });
         return;
       }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      applyLivePosition(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy ?? null);
-      try {
-        locationWatchRef.current = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 5 },
-          (next) => applyLivePosition(next.coords.latitude, next.coords.longitude, next.coords.accuracy ?? null)
-        );
-      } catch {}
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
+      applyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
     } catch {
-      setLocation(prev => ({ ...prev, text: 'Unable to get live location' }));
+      setLocation({ latitude: null, longitude: null, accuracy: null, text: 'Unable to get live location' });
     }
   };
 
@@ -168,25 +212,19 @@ export default function AlertScreen() {
         }),
       });
       const data = await res.json();
-      if (res.ok && data?.success) alertIdRef.current = data.id || null;
+      if (res.ok && data?.success) {
+        alertIdRef.current = data.id || null;
+        setSosSaved(true);
+        // IMPORTANT: create the Firestore SOS document first, then attach live GPS.
+        await getLiveLocation();
+      } else {
+        createdRef.current = false;
+        console.warn('SOS create failed:', data?.message || 'Unknown error');
+      }
     } catch (e) {
+      createdRef.current = false;
       console.warn('SOS create failed:', e);
-    } finally {
-      // SOS record is created first. Location acquisition starts immediately after,
-      // without blocking the emergency screen or waiting for a long accuracy warm-up.
-      getLiveLocation();
     }
-  };
-
-  const updateRealSosLocation = async (coords: { latitude: number; longitude: number; accuracy?: number; policeStation?: string; policeAddress?: string; policeDistanceKm?: number | null }) => {
-    if (!alertIdRef.current) return;
-    try {
-      await fetch(`${API_URL}/api/sos/${encodeURIComponent(alertIdRef.current)}/location`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(coords),
-      });
-    } catch {}
   };
 
   useEffect(() => {
@@ -210,13 +248,11 @@ export default function AlertScreen() {
       Vibration.cancel();
       clearInterval(timer);
       loop.stop();
-      try {
-        if (Platform.OS === 'web' && typeof navigator !== 'undefined' && typeof locationWatchRef.current === 'number') {
-          navigator.geolocation.clearWatch(locationWatchRef.current);
-        } else {
-          locationWatchRef.current?.remove?.();
-        }
-      } catch {}
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && locationWatchRef.current != null) {
+        navigator.geolocation.clearWatch(locationWatchRef.current);
+        locationWatchRef.current = null;
+      }
+      if (policeTimerRef.current) clearTimeout(policeTimerRef.current);
     };
   }, []);
 
@@ -341,7 +377,7 @@ export default function AlertScreen() {
           <Text style={styles.cardTitle}>📍 Your Live Location</Text>
           <View style={styles.locationBox}>
             <Text style={styles.locationTxt}>{location.text}</Text>
-            <Text style={styles.locationCoords}>{location.latitude != null && location.longitude != null ? `${location.latitude.toFixed(6)}°N, ${location.longitude.toFixed(6)}°E${location.accuracy != null ? `  •  ±${Math.round(location.accuracy)} m` : ''}` : 'Getting GPS...'}</Text>
+            <Text style={styles.locationCoords}>{location.latitude != null && location.longitude != null ? `${location.latitude.toFixed(6)}°N, ${location.longitude.toFixed(6)}°E${location.accuracy != null ? `  •  ±${Math.round(location.accuracy)} m` : ''}` : 'Waiting for live coordinates...'}</Text>
           </View>
           <TouchableOpacity
             style={styles.mapBtn}
@@ -361,22 +397,31 @@ export default function AlertScreen() {
           <View style={styles.cardTopLine} />
           <Text style={styles.cardTitle}>🚔 Nearest Police Station</Text>
           <View style={styles.policeRow}>
-            <View style={styles.policeIco}><Text style={{ fontSize: 24 }}>🚔</Text></View>
+            <View style={styles.policeIco}>
+              <Text style={{ fontSize: 24 }}>🚔</Text>
+            </View>
             <View style={styles.policeInfo}>
               <Text style={styles.policeName}>{police.name}</Text>
               <Text style={styles.policeAddr}>{police.address}</Text>
-              <Text style={styles.policeDist}>{police.distanceKm != null ? `📍 ${police.distanceKm.toFixed(2)} km away` : '📍 Calculating nearest station...'}</Text>
+              <Text style={styles.policeDist}>
+                {police.distanceKm != null
+                  ? `📍 ${police.distanceKm.toFixed(2)} km away`
+                  : '📍 Searching from your live GPS location...'}
+              </Text>
             </View>
           </View>
+
+          {police.mapsUrl ? (
+            <TouchableOpacity
+              style={styles.mapBtn}
+              onPress={() => Linking.openURL(police.mapsUrl)}
+            >
+              <Text style={styles.mapBtnTxt}>🗺️  Open Nearest Police Station</Text>
+            </TouchableOpacity>
+          ) : null}
+
           <TouchableOpacity style={styles.callPoliceBtn} onPress={() => Linking.openURL('tel:100')}>
             <Text style={styles.callPoliceTxt}>📞  Call Police — 100</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.callPoliceBtn, { marginTop: 8 }]}
-            disabled={!police.mapsUrl}
-            onPress={() => police.mapsUrl && Linking.openURL(police.mapsUrl)}
-          >
-            <Text style={styles.callPoliceTxt}>🗺️  Open Nearest Police Station</Text>
           </TouchableOpacity>
         </View>
 
