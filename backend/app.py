@@ -952,49 +952,27 @@ def resolve_user_sos(doc_id):
 
 @app.get("/api/police/nearest")
 def nearest_police():
-    """Find the nearest mapped police station using free public OSM/Overpass services."""
+    """Find the nearest mapped police station using an India police GIS layer.
+
+    Primary source: Esri India Living Atlas public Police Station layer.
+    Fallback: Nominatim/OSM nearby POI search if the GIS service is unavailable.
+    """
     try:
         lat = float(request.args.get("lat"))
         lon = float(request.args.get("lon"))
     except (TypeError, ValueError):
-        return jsonify(
-            {
-                "success": False,
-                "message": "Valid latitude and longitude are required.",
-            }
-        ), 400
+        return jsonify({
+            "success": False,
+            "message": "Valid latitude and longitude are required.",
+        }), 400
 
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-        return jsonify(
-            {
-                "success": False,
-                "message": "Latitude or longitude is out of range.",
-            }
-        ), 400
+        return jsonify({
+            "success": False,
+            "message": "Latitude or longitude is out of range.",
+        }), 400
 
-    # Search two common OSM police tags within 10 km.
-    query = (
-        f'[out:json][timeout:6];'
-        f'('
-        f'nwr["amenity"="police"](around:10000,{lat},{lon});'
-        f'nwr["police"](around:10000,{lat},{lon});'
-        f');'
-        f'out center tags;'
-    )
-
-    endpoints = [
-        "https://overpass-api.de/api/interpreter",
-        "https://overpass.private.coffee/api/interpreter",
-    ]
-
-    def make_candidate(item):
-        center = item.get("center") or {}
-        p_lat = item.get("lat", center.get("lat"))
-        p_lon = item.get("lon", center.get("lon"))
-
-        if p_lat is None or p_lon is None:
-            return None
-
+    def make_candidate(name, address, p_lat, p_lon):
         try:
             p_lat = float(p_lat)
             p_lon = float(p_lon)
@@ -1002,30 +980,9 @@ def nearest_police():
             return None
 
         distance = haversine_km(lat, lon, p_lat, p_lon)
-        tags = item.get("tags") or {}
-
-        name = (
-            tags.get("name")
-            or tags.get("name:en")
-            or tags.get("official_name")
-            or "Police Station"
-        )
-
-        address_parts = [
-            tags.get(key)
-            for key in (
-                "addr:housenumber",
-                "addr:street",
-                "addr:suburb",
-                "addr:city",
-                "addr:district",
-            )
-            if tags.get(key)
-        ]
-
         return {
-            "name": name,
-            "address": ", ".join(address_parts) or "Nearby police station",
+            "name": name or "Police Station",
+            "address": address or "Nearby police station",
             "latitude": p_lat,
             "longitude": p_lon,
             "distanceKm": round(distance, 2),
@@ -1035,89 +992,140 @@ def nearest_police():
             ),
         }
 
-    def query_overpass(endpoint):
-        response = requests.post(
-            endpoint,
-            data=query,
+    best = None
+
+    # ------------------------------------------------------------
+    # 1) PRIMARY: Esri India Living Atlas police-station layer
+    # ------------------------------------------------------------
+    esri_url = (
+        "https://livingatlas.esri.in/server/rest/services/"
+        "Police_Station_Location/MapServer/0/query"
+    )
+
+    try:
+        esri_params = {
+            "f": "json",
+            "where": "1=1",
+            "geometry": f"{lon},{lat}",
+            "geometryType": "esriGeometryPoint",
+            "inSR": "4326",
+            "spatialRel": "esriSpatialRelIntersects",
+            "distance": "25000",
+            "units": "esriSRUnit_Meter",
+            "outFields": "*",
+            "returnGeometry": "true",
+            "outSR": "4326",
+            "resultRecordCount": "50",
+        }
+
+        response = requests.get(
+            esri_url,
+            params=esri_params,
             headers={
                 "User-Agent": "WSApp/1.0 (+https://github.com/tamilanbu0475-lang/WSApp)",
                 "Accept": "application/json",
             },
-            timeout=7,
+            timeout=8,
         )
         response.raise_for_status()
-        body = response.json()
-        return body.get("elements", []) if isinstance(body, dict) else []
+        data = response.json()
 
-    best = None
+        for feature in data.get("features", []) if isinstance(data, dict) else []:
+            attrs = feature.get("attributes") or {}
+            geometry = feature.get("geometry") or {}
 
-    # Query two public endpoints in parallel so one slow server does not block
-    # the other one from starting.
-    try:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+            p_lat = geometry.get("y")
+            p_lon = geometry.get("x")
+            if p_lat is None or p_lon is None:
+                continue
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {
-                executor.submit(query_overpass, endpoint): endpoint
-                for endpoint in endpoints
-            }
+            name = (
+                attrs.get("ps_name")
+                or attrs.get("name")
+                or "Police Station"
+            )
 
-            for future in as_completed(futures):
-                try:
-                    elements = future.result()
-                except Exception:
-                    continue
+            address_parts = [
+                attrs.get("village"),
+                attrs.get("sub_dist"),
+                attrs.get("district"),
+                attrs.get("state"),
+                attrs.get("pincode"),
+            ]
+            address = ", ".join(str(v) for v in address_parts if v not in (None, ""))
 
-                for item in elements:
-                    candidate = make_candidate(item)
-                    if candidate is None:
-                        continue
-
-                    if best is None or candidate["distanceKm"] < best["distanceKm"]:
-                        best = candidate
+            candidate = make_candidate(name, address, p_lat, p_lon)
+            if candidate and (best is None or candidate["distanceKm"] < best["distanceKm"]):
+                best = candidate
 
     except Exception:
-        best = None
+        pass
 
-    # Third public endpoint as a fallback if the first two fail.
+    # ------------------------------------------------------------
+    # 2) FALLBACK: Nominatim / OpenStreetMap
+    # ------------------------------------------------------------
     if best is None:
-        fallback_endpoint = (
-            "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
-        )
-
         try:
-            elements = query_overpass(fallback_endpoint)
+            radius_deg = 0.20  # roughly 20 km around the GPS point
+            west = lon - radius_deg
+            east = lon + radius_deg
+            south = lat - radius_deg
+            north = lat + radius_deg
 
-            for item in elements:
-                candidate = make_candidate(item)
-                if candidate is None:
+            nominatim_url = "https://nominatim.openstreetmap.org/search"
+            params = {
+                "q": "[police]",
+                "format": "jsonv2",
+                "limit": "50",
+                "countrycodes": "in",
+                "viewbox": f"{west},{north},{east},{south}",
+                "bounded": "1",
+                "addressdetails": "1",
+            }
+
+            response = requests.get(
+                nominatim_url,
+                params=params,
+                headers={
+                    "User-Agent": "WSApp/1.0 (+https://github.com/tamilanbu0475-lang/WSApp)",
+                    "Accept": "application/json",
+                    "Accept-Language": "en",
+                },
+                timeout=8,
+            )
+            response.raise_for_status()
+            results = response.json()
+
+            for item in results if isinstance(results, list) else []:
+                p_lat = item.get("lat")
+                p_lon = item.get("lon")
+                if p_lat is None or p_lon is None:
                     continue
 
-                if best is None or candidate["distanceKm"] < best["distanceKm"]:
+                address = item.get("display_name") or "Nearby police station"
+                name = item.get("name") or item.get("display_name") or "Police Station"
+
+                candidate = make_candidate(name, address, p_lat, p_lon)
+                if candidate and (best is None or candidate["distanceKm"] < best["distanceKm"]):
                     best = candidate
+
         except Exception:
             pass
 
     if best is not None:
-        return jsonify(
-            {
-                "success": True,
-                "police": best,
-            }
-        ), 200
+        return jsonify({
+            "success": True,
+            "police": best,
+        }), 200
 
-    # Keep the SOS screen usable even when the public map directory is
-    # temporarily unavailable. The frontend can open this Google Maps search.
-    return jsonify(
-        {
-            "success": False,
-            "message": "No nearby police station found right now.",
-            "mapsSearchUrl": (
-                "https://www.google.com/maps/search/"
-                f"?api=1&query=police+station+near+{lat},{lon}"
-            ),
-        }
-    ), 404
+    return jsonify({
+        "success": False,
+        "message": "Police station data is temporarily unavailable.",
+        "mapsSearchUrl": (
+            "https://www.google.com/maps/search/"
+            f"?api=1&query=police+station+near+{lat},{lon}"
+        ),
+    }), 404
 
 
 # ---------------- ADMIN DATA ----------------
