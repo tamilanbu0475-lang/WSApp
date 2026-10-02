@@ -32,11 +32,39 @@ export default function ContactsScreen() {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
-  const [contacts, setContacts] = useState<Contact[]>([
-    { id: 1, name: 'Mom',               phone: '+91 98765 43210', relation: 'Mother', initials: 'MA', color: '#C9A84C', primary: true },
-    { id: 2, name: 'Sister Divya',      phone: '+91 87654 32109', relation: 'Sister', initials: 'SD', color: '#4ade80' },
-    { id: 3, name: 'Best Friend Priya', phone: '+91 76543 21098', relation: 'Friend', initials: 'BP', color: '#60a5fa' },
-  ]);
+  // Contacts are stored separately for each signed-in user.
+  // No demo/default contacts are preloaded.
+  const getStorage = () => {
+    try {
+      return typeof globalThis !== 'undefined'
+        ? (globalThis as any).localStorage
+        : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const getCurrentUserKey = () => {
+    try {
+      const storage = getStorage();
+      const candidates = ['wsUser', 'user', 'userData', 'wsappUser'];
+
+      for (const key of candidates) {
+        const raw = storage?.getItem?.(key);
+        if (!raw) continue;
+
+        try {
+          const parsed = JSON.parse(raw);
+          const id = parsed?.uid || parsed?.id || parsed?.email || parsed?.phone;
+          if (id) return String(id).trim().toLowerCase();
+        } catch {}
+      }
+    } catch {}
+
+    return 'guest';
+  };
+
+  const storageKey = `wsapp_emergency_contacts_${getCurrentUserKey()}`;
 
   const [showForm, setShowForm] = useState(false);
   const [newName,  setNewName]  = useState('');
@@ -49,6 +77,48 @@ export default function ContactsScreen() {
 
   const getInitials = (n: string) =>
     n.split(' ').map(x => x[0]).join('').toUpperCase().slice(0, 2) || '??';
+
+  const readSavedContacts = (): Contact[] => {
+    try {
+      const raw = getStorage()?.getItem?.(storageKey);
+      if (!raw) return [];
+
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+
+      return parsed
+        .map((c: any) => ({
+          id: Number(c.id) || Date.now(),
+          name: String(c.name || '').trim(),
+          phone: String(c.phone || '').trim(),
+          relation: String(c.relation || 'Contact').trim(),
+          initials: String(c.initials || getInitials(String(c.name || ''))),
+          color: String(c.color || COLORS[0]),
+          primary: Boolean(c.primary),
+        }))
+        .filter((c: Contact) => c.name && c.phone);
+    } catch {
+      return [];
+    }
+  };
+
+  const saveContacts = (next: Contact[]) => {
+    setContacts(next);
+    try {
+      getStorage()?.setItem?.(storageKey, JSON.stringify(next));
+    } catch {}
+  };
+
+  const [contacts, setContacts] = useState<Contact[]>(readSavedContacts);
+
+  const setPrimary = (id: number) => {
+    saveContacts(
+      contacts.map(c => ({
+        ...c,
+        primary: c.id === id,
+      }))
+    );
+  };
 
   const addContact = () => {
     if (!newName.trim() || !newPhone.trim()) {
@@ -67,17 +137,47 @@ export default function ContactsScreen() {
       initials: getInitials(newName),
       color:    COLORS[contacts.length % COLORS.length],
     };
-    setContacts(prev => [...prev, c]);
+    const next = [...contacts, c];
+    if (next.length === 1) {
+      next[0].primary = true;
+    }
+    saveContacts(next);
     setNewName('');
     setNewPhone('');
     setNewRel('');
     setShowForm(false);
   };
 
+  const removeContactNow = (id: number) => {
+    const removed = contacts.find(c => c.id === id);
+    const next = contacts.filter(c => c.id !== id);
+
+    if (removed?.primary && next.length > 0 && !next.some(c => c.primary)) {
+      next[0] = { ...next[0], primary: true };
+    }
+
+    saveContacts(next);
+  };
+
   const deleteContact = (id: number) => {
-    Alert.alert('Delete Contact', 'Remove this emergency contact?', [
+    const contact = contacts.find(c => c.id === id);
+    if (!contact) return;
+
+    // React Native Web's Alert action buttons can be inconsistent across browsers.
+    // Use the browser confirmation dialog on web so Delete always executes.
+    if (Platform.OS === 'web') {
+      const confirmed =
+        typeof window !== 'undefined'
+          ? window.confirm(`Remove ${contact.name} from emergency contacts?`)
+          : true;
+
+      if (confirmed) removeContactNow(id);
+      return;
+    }
+
+    Alert.alert('Delete Contact', `Remove ${contact.name} from emergency contacts?`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => setContacts(p => p.filter(c => c.id !== id)) },
+      { text: 'Delete', style: 'destructive', onPress: () => removeContactNow(id) },
     ]);
   };
 
@@ -95,7 +195,7 @@ export default function ContactsScreen() {
 
         {/* TOP BAR */}
         <View style={[styles.topBar, isMobile && styles.topBarMobile]}>
-          <TouchableOpacity onPress={() => router.back()}>
+          <TouchableOpacity onPress={() => router.replace('/' as any)}>
             <Text style={styles.backTxt}>← Home</Text>
           </TouchableOpacity>
           <Text style={styles.topTitle}>Emergency Contacts</Text>
@@ -150,6 +250,13 @@ export default function ContactsScreen() {
                 <TouchableOpacity style={styles.callBtn} onPress={() => Linking.openURL(`tel:${c.phone}`)}>
                   <Text style={{ fontSize: 16 }}>📞</Text>
                 </TouchableOpacity>
+
+                {!c.primary && (
+                  <TouchableOpacity style={styles.primarySetBtn} onPress={() => setPrimary(c.id)}>
+                    <Text style={styles.primarySetTxt}>⭐</Text>
+                  </TouchableOpacity>
+                )}
+
                 <TouchableOpacity style={styles.deleteBtn} onPress={() => deleteContact(c.id)}>
                   <Text style={{ fontSize: 16 }}>🗑</Text>
                 </TouchableOpacity>
@@ -305,6 +412,8 @@ const styles = StyleSheet.create({
   cRelation:   { color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 1 },
   cActions:    { flexDirection: 'row', gap: 8 },
   callBtn:     { width: 38, height: 38, borderRadius: 11, backgroundColor: 'rgba(74,222,128,0.1)', borderWidth: 1, borderColor: 'rgba(74,222,128,0.28)', alignItems: 'center', justifyContent: 'center' },
+  primarySetBtn:{ width: 38, height: 38, borderRadius: 11, backgroundColor: 'rgba(201,168,76,0.09)', borderWidth: 1, borderColor: 'rgba(201,168,76,0.24)', alignItems: 'center', justifyContent: 'center' },
+  primarySetTxt:{ fontSize: 16 },
   deleteBtn:   { width: 38, height: 38, borderRadius: 11, backgroundColor: 'rgba(248,113,113,0.08)', borderWidth: 1, borderColor: 'rgba(248,113,113,0.22)', alignItems: 'center', justifyContent: 'center' },
 
   emptyState:  { alignItems: 'center', paddingVertical: 40, zIndex: 2 },
