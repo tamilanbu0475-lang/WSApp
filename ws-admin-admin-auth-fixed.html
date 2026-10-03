@@ -512,6 +512,9 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 .modal-backdrop.on{display:flex;}
 .data-modal{width:min(680px,100%);max-height:85vh;overflow:auto;background:#210611;border:1px solid var(--border-g);border-radius:16px;box-shadow:var(--shadow2);padding:22px;}
 .data-modal h3{font-size:17px;margin-bottom:8px;}.data-modal .meta{color:rgba(255,255,255,.5);font-size:11px;margin-bottom:18px;}
+#dataModal textarea:focus{border-color:rgba(201,168,76,.55);box-shadow:0 0 0 3px rgba(201,168,76,.08);}
+#dataModal button:disabled{opacity:.55;cursor:not-allowed;}
+
 .kv-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}.kv{background:rgba(255,255,255,.04);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.07);}.kv span{display:block;color:rgba(255,255,255,.42);font-size:10px;margin-bottom:5px}.kv strong{font-size:12px;word-break:break-word;}
 .action-group{display:flex;gap:7px;flex-wrap:wrap;}.danger-btn{border-color:rgba(192,57,43,.55)!important;color:#ff9d95!important;}.success-btn{border-color:rgba(11,110,79,.55)!important;color:#7df0c9!important;}
 @media(max-width:600px){.kv-grid{grid-template-columns:1fr;}.section-row{align-items:flex-start;}}
@@ -853,9 +856,96 @@ function viewSos(id){const a=allSos.find(x=>x.id===id);if(!a)return;showModal('S
 async function resolveSos(id){if(!confirm('Mark this SOS alert as resolved?'))return;try{await api('/api/admin/sos/'+encodeURIComponent(id)+'/status',{method:'PATCH',body:JSON.stringify({status:'resolved'})});await loadSos();await loadDashboard();}catch(e){alert(e.message);}}
 
 async function loadComplaints(){const body=document.getElementById('complaintsBody');body.innerHTML='<tr><td colspan="7"><div class="empty-state">Loading real complaints...</div></td></tr>';try{const d=await api('/api/admin/complaints');allComplaints=d.complaints||[];renderComplaints();document.getElementById('complaintSummary').textContent=(d.total||0)+' complaints • '+(d.pending||0)+' pending';document.getElementById('dashboardComplaintCount').textContent=d.total||0;document.getElementById('dashboardResolvedCount').textContent=d.resolved||0;document.getElementById('sidebarComplaintCount').textContent=d.pending||0;}catch(e){body.innerHTML=errRow(7,e.message);}}
-function renderComplaints(){const body=document.getElementById('complaintsBody');const q=(document.getElementById('complaintSearch')?.value||'').toLowerCase();const f=document.getElementById('complaintFilter')?.value||'all';const rows=allComplaints.filter(c=>{const st=String(c.status||'pending').toLowerCase().replace(/\s+/g,'_');const text=[c.fullName,c.category,c.description,c.subject,c.id].join(' ').toLowerCase();return (!q||text.includes(q))&&(f==='all'||(f==='review'&&st==='under_review')||st===f);});if(!rows.length){body.innerHTML='<tr><td colspan="7"><div class="empty-state">No real complaints found.</div></td></tr>';return;}body.innerHTML=rows.map((c,i)=>{const st=String(c.status||'pending').toLowerCase();return `<tr><td style="color:rgba(255,255,255,.3)">${String(i+1).padStart(3,'0')}</td><td>${esc(c.fullName||c.userName||'Anonymous')}</td><td>${esc(c.category||'—')}</td><td style="max-width:360px;white-space:normal;color:rgba(255,255,255,.6)">${esc(c.description||c.subject||'—')}</td><td>${fmtDateTime(c.createdAt)}</td><td><span class="bdg ${st==='resolved'?'res':st==='under review'?'mon':'pnd'}">${esc(st.toUpperCase())}</span></td><td><button class="ab vw" onclick="viewComplaint('${esc(c.id)}')">View</button> ${st!=='resolved'?`<button class="ab rs" onclick="resolveComplaint('${esc(c.id)}')">Resolve</button>`:''}</td></tr>`}).join('');}
-function viewComplaint(id){const c=allComplaints.find(x=>x.id===id);if(!c)return;showModal('Complaint','<div class="meta">Real complaint record</div><div class="kv-grid"><div class="kv"><span>User</span><strong>'+esc(c.fullName||c.userName||'Anonymous')+'</strong></div><div class="kv"><span>Category</span><strong>'+esc(c.category||'—')+'</strong></div><div class="kv"><span>Status</span><strong>'+esc(c.status||'—')+'</strong></div><div class="kv"><span>Created</span><strong>'+fmtDateTime(c.createdAt)+'</strong></div><div class="kv" style="grid-column:1/-1"><span>Description</span><strong>'+esc(c.description||c.subject||'—')+'</strong></div></div>');}
-async function resolveComplaint(id){if(!confirm('Mark this complaint as resolved?'))return;try{await api('/api/admin/complaints/'+encodeURIComponent(id)+'/status',{method:'PATCH',body:JSON.stringify({status:'resolved'})});await loadComplaints();await loadDashboard();}catch(e){alert(e.message);}}
+function complaintStatusKey(value){return String(value||'pending').toLowerCase().replace(/\s+/g,'_');}
+function complaintStatusLabel(value){const s=complaintStatusKey(value);return s==='under_review'?'UNDER REVIEW':s.toUpperCase();}
+function complaintStatusClass(value){const s=complaintStatusKey(value);return s==='resolved'?'res':s==='under_review'?'mon':s==='rejected'?'crit':'pnd';}
+function renderComplaints(){
+  const body=document.getElementById('complaintsBody');
+  const q=(document.getElementById('complaintSearch')?.value||'').toLowerCase();
+  const f=document.getElementById('complaintFilter')?.value||'all';
+  const rows=allComplaints.filter(c=>{
+    const st=complaintStatusKey(c.status);
+    const text=[c.fullName,c.category,c.description,c.subject,c.id].join(' ').toLowerCase();
+    return (!q||text.includes(q)) && (f==='all'||(f==='review'&&st==='under_review')||st===f);
+  });
+  if(!rows.length){body.innerHTML='<tr><td colspan="7"><div class="empty-state">No real complaints found.</div></td></tr>';return;}
+  body.innerHTML=rows.map((c,i)=>{
+    const st=complaintStatusKey(c.status);
+    const resolved=st==='resolved';
+    const review=st==='under_review';
+    return `<tr>
+      <td style="color:rgba(255,255,255,.3)">${String(i+1).padStart(3,'0')}</td>
+      <td>${esc(c.fullName||c.userName||'Anonymous')}</td>
+      <td>${esc(c.category||'—')}</td>
+      <td style="max-width:360px;white-space:normal;color:rgba(255,255,255,.6)">${esc(c.description||c.subject||'—')}</td>
+      <td>${fmtDateTime(c.createdAt)}</td>
+      <td><span class="bdg ${complaintStatusClass(st)}">${complaintStatusLabel(st)}</span></td>
+      <td><button class="ab vw" onclick="viewComplaint('${esc(c.id)}')">View</button>
+        ${!review&&!resolved?`<button class="ab vw" onclick="markComplaintReview('${esc(c.id)}')">Review</button>`:''}
+        ${!resolved?`<button class="ab rs" onclick="resolveComplaint('${esc(c.id)}')">Resolve</button>`:`<button class="ab vw" onclick="editComplaintResponse('${esc(c.id)}')">Edit Response</button>`}
+      </td>
+    </tr>`;
+  }).join('');
+}
+function viewComplaint(id){
+  const c=allComplaints.find(x=>x.id===id); if(!c)return;
+  showModal('Complaint','<div class="meta">Real complaint record</div><div class="kv-grid">'
+    +'<div class="kv"><span>User</span><strong>'+esc(c.fullName||c.userName||'Anonymous')+'</strong></div>'
+    +'<div class="kv"><span>Category</span><strong>'+esc(c.category||'—')+'</strong></div>'
+    +'<div class="kv"><span>Status</span><strong>'+esc(complaintStatusLabel(c.status))+'</strong></div>'
+    +'<div class="kv"><span>Created</span><strong>'+fmtDateTime(c.createdAt)+'</strong></div>'
+    +'<div class="kv" style="grid-column:1/-1"><span>Location</span><strong>'+esc(c.location||'—')+'</strong></div>'
+    +'<div class="kv" style="grid-column:1/-1"><span>Description</span><strong>'+esc(c.description||c.subject||'—')+'</strong></div>'
+    +'<div class="kv" style="grid-column:1/-1"><span>Admin Response</span><strong>'+esc(c.adminResponse||'No response yet.')+'</strong></div>'
+    +'</div>');
+}
+async function updateComplaintStatus(id,status,adminResponse=''){
+  try{
+    await api('/api/admin/complaints/'+encodeURIComponent(id)+'/status',{
+      method:'PATCH',
+      body:JSON.stringify({status,adminResponse})
+    });
+    await loadComplaints();
+    await loadDashboard();
+  }catch(e){alert(e.message);}
+}
+async function markComplaintReview(id){
+  if(!confirm('Move this complaint to Under Review?'))return;
+  await updateComplaintStatus(id,'under_review');
+}
+function openComplaintResponseEditor(id, mode){
+  const c=allComplaints.find(x=>x.id===id);
+  if(!c)return;
+  const existing=String(c.adminResponse||'').trim();
+  const defaultResponse=existing||"Don't worry, we are always standing with you.";
+  const isEdit=mode==='edit';
+  const title=isEdit?'Edit Admin Response':'Resolve Complaint';
+  const actionLabel=isEdit?'Save Response':'Save & Resolve';
+  showModal(title,
+    '<div class="meta">'+(isEdit?'Update the response shown to the user.':'Enter the final response before marking this complaint resolved.')+'</div>'+
+    '<div style="margin-bottom:14px"><div class="kv"><span>Category</span><strong>'+esc(c.category||'—')+'</strong></div></div>'+
+    '<div style="margin-bottom:14px"><div class="kv"><span>Description</span><strong style="display:block;margin-top:5px;line-height:1.55">'+esc(c.description||c.subject||'—')+'</strong></div></div>'+
+    '<label style="display:block;color:rgba(201,168,76,.8);font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:7px">Admin Response</label>'+
+    '<textarea id="complaintResponseInput" style="width:100%;min-height:150px;resize:vertical;background:rgba(255,255,255,.06);border:1px solid rgba(201,168,76,.28);border-radius:12px;padding:13px 14px;color:#fff;font:500 13px Inter,system-ui,sans-serif;outline:none;line-height:1.55" placeholder="Type the response shown to the user...">'+esc(defaultResponse)+'</textarea>'+
+    '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">'+
+      '<button class="ab vw" onclick="document.getElementById(\'dataModal\').classList.remove(\'on\')">Cancel</button>'+
+      `<button class="ab rs" onclick="saveComplaintResponse('${esc(c.id)}','${isEdit?'edit':'resolve'}')">${actionLabel}</button>`+
+    '</div>'
+  );
+  setTimeout(()=>document.getElementById('complaintResponseInput')?.focus(),50);
+}
+async function saveComplaintResponse(id, mode){
+  const input=document.getElementById('complaintResponseInput');
+  const response=String(input?.value||'').trim();
+  if(response.length<3){alert('Please enter a response before saving.');return;}
+  const btns=document.querySelectorAll('#dataModal .ab');btns.forEach(b=>b.disabled=true);
+  try{
+    await updateComplaintStatus(id, mode==='edit'?'resolved':'resolved', response);
+    document.getElementById('dataModal')?.classList.remove('on');
+  }finally{btns.forEach(b=>b.disabled=false);}
+}
+async function resolveComplaint(id){openComplaintResponseEditor(id,'resolve');}
+async function editComplaintResponse(id){openComplaintResponseEditor(id,'edit');}
 function exportComplaints(){downloadCsv('ws-app-complaints.csv',[['ID','User','Category','Description','Created','Status'],...allComplaints.map(c=>[c.id,c.fullName||c.userName||'Anonymous',c.category||'',c.description||c.subject||'',fmtDateTime(c.createdAt),c.status||'pending'])]);}
 
 async function loadChat(){const body=document.getElementById('chatBody');body.innerHTML='<tr><td colspan="6"><div class="empty-state">Loading real chat data...</div></td></tr>';try{const d=await api('/api/admin/chat');allChat=d.sessions||[];document.getElementById('chatSummary').textContent=(d.total||0)+' sessions';document.getElementById('dashboardChatCount').textContent=d.total||0;document.getElementById('sidebarChatCount').textContent=d.today||d.total||0;if(!allChat.length){body.innerHTML='<tr><td colspan="6"><div class="empty-state">No real chat sessions recorded yet.</div></td></tr>';return;}body.innerHTML=allChat.map((c,i)=>`<tr><td>${String(i+1).padStart(3,'0')}</td><td>${esc(c.fullName||c.userName||'Anonymous')}</td><td style="max-width:420px;white-space:normal;color:rgba(255,255,255,.6)">${esc(c.firstMessage||'—')}</td><td>${fmtDateTime(c.createdAt)}</td><td><span class="bdg ${String(c.status||'safe').toLowerCase()==='crisis'?'crit':String(c.status||'safe').toLowerCase()==='monitor'?'mon':'saf'}">${esc((c.status||'safe').toUpperCase())}</span></td><td><button class="ab vw" onclick="viewChat('${esc(c.id)}')">View</button></td></tr>`).join('');}catch(e){body.innerHTML=errRow(6,e.message);}}
