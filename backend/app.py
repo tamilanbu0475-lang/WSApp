@@ -757,6 +757,207 @@ def login():
         ), 500
 
 
+# ---------------- USER ACCOUNT SOFT-DELETE ----------------
+
+def require_user_from_token():
+    """Return the authenticated Firebase user decoded from the Bearer ID token."""
+    header = request.headers.get("Authorization", "")
+
+    if not header.startswith("Bearer "):
+        return None, (jsonify({
+            "success": False,
+            "message": "Authentication required."
+        }), 401)
+
+    token = header.split(" ", 1)[1].strip()
+
+    if not token:
+        return None, (jsonify({
+            "success": False,
+            "message": "Authentication required."
+        }), 401)
+
+    try:
+        decoded = auth.verify_id_token(token)
+    except Exception:
+        return None, (jsonify({
+            "success": False,
+            "message": "Invalid or expired login session."
+        }), 401)
+
+    uid = str(decoded.get("uid") or "").strip()
+    if not uid:
+        return None, (jsonify({
+            "success": False,
+            "message": "Invalid user session."
+        }), 401)
+
+    return decoded, None
+
+
+@app.post("/api/account/deactivate")
+def deactivate_account():
+    """Soft-delete the currently signed-in user without removing Firestore data."""
+    try:
+        decoded, error_response = require_user_from_token()
+        if error_response is not None:
+            return error_response
+
+        uid = decoded["uid"]
+        user_ref = db.collection("users").document(uid)
+        user_snap = user_ref.get()
+
+        if not user_snap.exists:
+            return jsonify({
+                "success": False,
+                "message": "Account profile was not found."
+            }), 404
+
+        current = user_snap.to_dict() or {}
+        current_status = str(current.get("status") or "active").strip().lower()
+
+        if current_status in {"deleted", "deactivated", "archived"}:
+            return jsonify({
+                "success": True,
+                "status": "deleted",
+                "message": "Account is already deactivated."
+            }), 200
+
+        # Disable Firebase Authentication so the account cannot sign in while
+        # keeping Firestore data available for later recovery.
+        auth.update_user(uid, disabled=True)
+
+        user_ref.set({
+            "status": "deleted",
+            "isDeleted": True,
+            "deletedAt": firestore.SERVER_TIMESTAMP,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+
+        return jsonify({
+            "success": True,
+            "status": "deleted",
+            "message": "Your account has been deactivated. You can recover it through the administrator restore flow."
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Unable to deactivate the account.",
+            "error": str(e),
+        }), 500
+
+
+@app.get("/api/account/status")
+def account_status():
+    """Return the soft-delete state of the currently signed-in user."""
+    try:
+        decoded, error_response = require_user_from_token()
+        if error_response is not None:
+            return error_response
+
+        uid = decoded["uid"]
+        snap = db.collection("users").document(uid).get()
+
+        if not snap.exists:
+            return jsonify({
+                "success": False,
+                "message": "Account profile was not found."
+            }), 404
+
+        data = snap.to_dict() or {}
+        status = str(data.get("status") or "active").strip().lower()
+
+        if status in {"deleted", "deactivated", "archived"} or bool(data.get("isDeleted")):
+            status = "deleted"
+        elif status not in {"active", "blocked"}:
+            status = "active"
+
+        return jsonify({
+            "success": True,
+            "uid": uid,
+            "status": status,
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Unable to read account status.",
+            "error": str(e),
+        }), 500
+
+
+# ---------------- USER ACCOUNT ----------------
+
+@app.post("/api/account/delete")
+def delete_own_account():
+    """Permanently remove the signed-in user's Firebase Auth account and profile document.
+
+    Existing SOS/complaint records are intentionally kept for application history/audit,
+    while the authentication account and personal profile document are removed.
+    The same email/phone can then be registered again as a brand-new account.
+    """
+    try:
+        header = request.headers.get("Authorization", "")
+
+        if not header.startswith("Bearer "):
+            return jsonify({
+                "success": False,
+                "message": "Authentication required.",
+            }), 401
+
+        token = header.split(" ", 1)[1].strip()
+
+        if not token:
+            return jsonify({
+                "success": False,
+                "message": "Authentication required.",
+            }), 401
+
+        decoded = auth.verify_id_token(token)
+        uid = str(decoded.get("uid") or "").strip()
+
+        if not uid:
+            return jsonify({
+                "success": False,
+                "message": "Invalid user session.",
+            }), 401
+
+        # Delete the Firebase Authentication account first.
+        auth.delete_user(uid)
+
+        # Remove the user's personal profile document so a new registration
+        # starts cleanly with the same email/phone if desired.
+        db.collection("users").document(uid).delete()
+
+        return jsonify({
+            "success": True,
+            "message": "Account deleted permanently. You can register again as a new user.",
+            "accountDeleted": True,
+        }), 200
+
+    except auth.UserNotFoundError:
+        # Already deleted from Firebase Auth; clean up the Firestore profile too.
+        try:
+            if 'uid' in locals() and uid:
+                db.collection("users").document(uid).delete()
+        except Exception:
+            pass
+
+        return jsonify({
+            "success": True,
+            "message": "Account is already deleted. You can register again as a new user.",
+            "accountDeleted": True,
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Unable to delete your account.",
+            "error": str(e),
+        }), 500
+
+
 # ---------------- USER SOS / NEAREST POLICE ----------------
 
 def verify_user_token_optional():
@@ -952,27 +1153,49 @@ def resolve_user_sos(doc_id):
 
 @app.get("/api/police/nearest")
 def nearest_police():
-    """Find the nearest mapped police station using an India police GIS layer.
-
-    Primary source: Esri India Living Atlas public Police Station layer.
-    Fallback: Nominatim/OSM nearby POI search if the GIS service is unavailable.
-    """
+    """Find the nearest mapped police station using free public OSM/Overpass services."""
     try:
         lat = float(request.args.get("lat"))
         lon = float(request.args.get("lon"))
     except (TypeError, ValueError):
-        return jsonify({
-            "success": False,
-            "message": "Valid latitude and longitude are required.",
-        }), 400
+        return jsonify(
+            {
+                "success": False,
+                "message": "Valid latitude and longitude are required.",
+            }
+        ), 400
 
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-        return jsonify({
-            "success": False,
-            "message": "Latitude or longitude is out of range.",
-        }), 400
+        return jsonify(
+            {
+                "success": False,
+                "message": "Latitude or longitude is out of range.",
+            }
+        ), 400
 
-    def make_candidate(name, address, p_lat, p_lon):
+    # Search two common OSM police tags within 10 km.
+    query = (
+        f'[out:json][timeout:6];'
+        f'('
+        f'nwr["amenity"="police"](around:10000,{lat},{lon});'
+        f'nwr["police"](around:10000,{lat},{lon});'
+        f');'
+        f'out center tags;'
+    )
+
+    endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+    ]
+
+    def make_candidate(item):
+        center = item.get("center") or {}
+        p_lat = item.get("lat", center.get("lat"))
+        p_lon = item.get("lon", center.get("lon"))
+
+        if p_lat is None or p_lon is None:
+            return None
+
         try:
             p_lat = float(p_lat)
             p_lon = float(p_lon)
@@ -980,9 +1203,30 @@ def nearest_police():
             return None
 
         distance = haversine_km(lat, lon, p_lat, p_lon)
+        tags = item.get("tags") or {}
+
+        name = (
+            tags.get("name")
+            or tags.get("name:en")
+            or tags.get("official_name")
+            or "Police Station"
+        )
+
+        address_parts = [
+            tags.get(key)
+            for key in (
+                "addr:housenumber",
+                "addr:street",
+                "addr:suburb",
+                "addr:city",
+                "addr:district",
+            )
+            if tags.get(key)
+        ]
+
         return {
-            "name": name or "Police Station",
-            "address": address or "Nearby police station",
+            "name": name,
+            "address": ", ".join(address_parts) or "Nearby police station",
             "latitude": p_lat,
             "longitude": p_lon,
             "distanceKm": round(distance, 2),
@@ -992,140 +1236,89 @@ def nearest_police():
             ),
         }
 
-    best = None
-
-    # ------------------------------------------------------------
-    # 1) PRIMARY: Esri India Living Atlas police-station layer
-    # ------------------------------------------------------------
-    esri_url = (
-        "https://livingatlas.esri.in/server/rest/services/"
-        "Police_Station_Location/MapServer/0/query"
-    )
-
-    try:
-        esri_params = {
-            "f": "json",
-            "where": "1=1",
-            "geometry": f"{lon},{lat}",
-            "geometryType": "esriGeometryPoint",
-            "inSR": "4326",
-            "spatialRel": "esriSpatialRelIntersects",
-            "distance": "25000",
-            "units": "esriSRUnit_Meter",
-            "outFields": "*",
-            "returnGeometry": "true",
-            "outSR": "4326",
-            "resultRecordCount": "50",
-        }
-
-        response = requests.get(
-            esri_url,
-            params=esri_params,
+    def query_overpass(endpoint):
+        response = requests.post(
+            endpoint,
+            data=query,
             headers={
                 "User-Agent": "WSApp/1.0 (+https://github.com/tamilanbu0475-lang/WSApp)",
                 "Accept": "application/json",
             },
-            timeout=8,
+            timeout=7,
         )
         response.raise_for_status()
-        data = response.json()
+        body = response.json()
+        return body.get("elements", []) if isinstance(body, dict) else []
 
-        for feature in data.get("features", []) if isinstance(data, dict) else []:
-            attrs = feature.get("attributes") or {}
-            geometry = feature.get("geometry") or {}
+    best = None
 
-            p_lat = geometry.get("y")
-            p_lon = geometry.get("x")
-            if p_lat is None or p_lon is None:
-                continue
+    # Query two public endpoints in parallel so one slow server does not block
+    # the other one from starting.
+    try:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            name = (
-                attrs.get("ps_name")
-                or attrs.get("name")
-                or "Police Station"
-            )
-
-            address_parts = [
-                attrs.get("village"),
-                attrs.get("sub_dist"),
-                attrs.get("district"),
-                attrs.get("state"),
-                attrs.get("pincode"),
-            ]
-            address = ", ".join(str(v) for v in address_parts if v not in (None, ""))
-
-            candidate = make_candidate(name, address, p_lat, p_lon)
-            if candidate and (best is None or candidate["distanceKm"] < best["distanceKm"]):
-                best = candidate
-
-    except Exception:
-        pass
-
-    # ------------------------------------------------------------
-    # 2) FALLBACK: Nominatim / OpenStreetMap
-    # ------------------------------------------------------------
-    if best is None:
-        try:
-            radius_deg = 0.20  # roughly 20 km around the GPS point
-            west = lon - radius_deg
-            east = lon + radius_deg
-            south = lat - radius_deg
-            north = lat + radius_deg
-
-            nominatim_url = "https://nominatim.openstreetmap.org/search"
-            params = {
-                "q": "[police]",
-                "format": "jsonv2",
-                "limit": "50",
-                "countrycodes": "in",
-                "viewbox": f"{west},{north},{east},{south}",
-                "bounded": "1",
-                "addressdetails": "1",
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {
+                executor.submit(query_overpass, endpoint): endpoint
+                for endpoint in endpoints
             }
 
-            response = requests.get(
-                nominatim_url,
-                params=params,
-                headers={
-                    "User-Agent": "WSApp/1.0 (+https://github.com/tamilanbu0475-lang/WSApp)",
-                    "Accept": "application/json",
-                    "Accept-Language": "en",
-                },
-                timeout=8,
-            )
-            response.raise_for_status()
-            results = response.json()
-
-            for item in results if isinstance(results, list) else []:
-                p_lat = item.get("lat")
-                p_lon = item.get("lon")
-                if p_lat is None or p_lon is None:
+            for future in as_completed(futures):
+                try:
+                    elements = future.result()
+                except Exception:
                     continue
 
-                address = item.get("display_name") or "Nearby police station"
-                name = item.get("name") or item.get("display_name") or "Police Station"
+                for item in elements:
+                    candidate = make_candidate(item)
+                    if candidate is None:
+                        continue
 
-                candidate = make_candidate(name, address, p_lat, p_lon)
-                if candidate and (best is None or candidate["distanceKm"] < best["distanceKm"]):
+                    if best is None or candidate["distanceKm"] < best["distanceKm"]:
+                        best = candidate
+
+    except Exception:
+        best = None
+
+    # Third public endpoint as a fallback if the first two fail.
+    if best is None:
+        fallback_endpoint = (
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+        )
+
+        try:
+            elements = query_overpass(fallback_endpoint)
+
+            for item in elements:
+                candidate = make_candidate(item)
+                if candidate is None:
+                    continue
+
+                if best is None or candidate["distanceKm"] < best["distanceKm"]:
                     best = candidate
-
         except Exception:
             pass
 
     if best is not None:
-        return jsonify({
-            "success": True,
-            "police": best,
-        }), 200
+        return jsonify(
+            {
+                "success": True,
+                "police": best,
+            }
+        ), 200
 
-    return jsonify({
-        "success": False,
-        "message": "Police station data is temporarily unavailable.",
-        "mapsSearchUrl": (
-            "https://www.google.com/maps/search/"
-            f"?api=1&query=police+station+near+{lat},{lon}"
-        ),
-    }), 404
+    # Keep the SOS screen usable even when the public map directory is
+    # temporarily unavailable. The frontend can open this Google Maps search.
+    return jsonify(
+        {
+            "success": False,
+            "message": "No nearby police station found right now.",
+            "mapsSearchUrl": (
+                "https://www.google.com/maps/search/"
+                f"?api=1&query=police+station+near+{lat},{lon}"
+            ),
+        }
+    ), 404
 
 
 # ---------------- ADMIN DATA ----------------
@@ -1138,11 +1331,20 @@ def admin_users():
         for doc in db.collection("users").stream():
             d = serialize(doc.to_dict() or {})
 
+            stored_status = str(d.get("status") or "").strip().lower()
+
             try:
                 fu = auth.get_user(doc.id)
                 disabled = fu.disabled
             except Exception:
-                disabled = d.get("status") == "blocked"
+                disabled = stored_status in {"blocked", "deleted", "deactivated", "archived"}
+
+            if bool(d.get("isDeleted")) or stored_status in {"deleted", "deactivated", "archived"}:
+                display_status = "deleted"
+            elif stored_status == "blocked" or disabled:
+                display_status = "blocked"
+            else:
+                display_status = "active"
 
             rows.append(
                 {
@@ -1151,7 +1353,7 @@ def admin_users():
                     "phone": d.get("phone", ""),
                     "email": d.get("email", ""),
                     "createdAt": d.get("createdAt"),
-                    "status": "blocked" if disabled else "active",
+                    "status": display_status,
                 }
             )
 
@@ -1182,36 +1384,88 @@ def admin_users():
 def admin_user_status(uid):
     try:
         data = request.get_json(silent=True) or {}
-        blocked = bool(data.get("blocked"))
 
-        auth.update_user(
-            uid,
-            disabled=blocked,
-        )
+        requested_status = str(data.get("status") or "").strip().lower()
+
+        if requested_status:
+            if requested_status not in {"active", "blocked", "deleted"}:
+                return jsonify({
+                    "success": False,
+                    "message": "Status must be active, blocked, or deleted.",
+                }), 400
+            status = requested_status
+        else:
+            blocked = bool(data.get("blocked"))
+            status = "blocked" if blocked else "active"
+
+        disabled = status in {"blocked", "deleted"}
+        auth.update_user(uid, disabled=disabled)
+
+        payload = {
+            "status": status,
+            "isDeleted": status == "deleted",
+            "statusUpdatedAt": firestore.SERVER_TIMESTAMP,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }
+
+        if status == "deleted":
+            payload["deletedAt"] = firestore.SERVER_TIMESTAMP
+        else:
+            payload["deletedAt"] = firestore.DELETE_FIELD
 
         db.collection("users").document(uid).set(
-            {
-                "status": "blocked" if blocked else "active",
-                "statusUpdatedAt": firestore.SERVER_TIMESTAMP,
-            },
+            payload,
             merge=True,
         )
 
-        return jsonify(
-            {
-                "success": True,
-                "status": "blocked" if blocked else "active",
-            }
-        )
+        return jsonify({
+            "success": True,
+            "status": status,
+        })
 
     except Exception as e:
-        return jsonify(
-            {
+        return jsonify({
+            "success": False,
+            "message": "Unable to update user status.",
+            "error": str(e),
+        }), 500
+
+
+@app.post("/api/admin/users/<uid>/restore")
+def admin_restore_user(uid):
+    """Restore a soft-deleted user without creating a new Firebase account."""
+    try:
+        user_ref = db.collection("users").document(uid)
+        snap = user_ref.get()
+
+        if not snap.exists:
+            return jsonify({
                 "success": False,
-                "message": "Unable to update user status.",
-                "error": str(e),
-            }
-        ), 500
+                "message": "User profile was not found.",
+            }), 404
+
+        auth.update_user(uid, disabled=False)
+
+        user_ref.set({
+            "status": "active",
+            "isDeleted": False,
+            "restoredAt": firestore.SERVER_TIMESTAMP,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+            "deletedAt": firestore.DELETE_FIELD,
+        }, merge=True)
+
+        return jsonify({
+            "success": True,
+            "status": "active",
+            "message": "User account restored successfully.",
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Unable to restore user account.",
+            "error": str(e),
+        }), 500
 
 
 def status_counts(rows):
