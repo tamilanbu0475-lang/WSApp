@@ -275,7 +275,7 @@ export default function ReportScreen() {
           <View style={styles.anonNote}>
             <Text style={{ fontSize: 16 }}>🔒</Text>
             <Text style={styles.anonNoteTxt}>
-              Your identity is not displayed to you as part of the complaint history. Your authenticated account is used only to securely link the report to your status updates.
+              Your identity is protected. Your report is stored confidentially and is not publicly displayed.
             </Text>
           </View>
 
