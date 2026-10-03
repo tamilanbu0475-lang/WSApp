@@ -1325,23 +1325,32 @@ def nearest_police():
 
 @app.get("/api/admin/users")
 def admin_users():
+    """Load admin user list from Firestore efficiently.
+
+    Firestore is the source of truth for the admin-visible status. We avoid
+    calling Firebase Authentication once per user because that N+1 lookup
+    pattern makes the Users page slower as the user count grows.
+    """
     try:
         rows = []
 
         for doc in db.collection("users").stream():
             d = serialize(doc.to_dict() or {})
 
-            stored_status = str(d.get("status") or "").strip().lower()
+            stored_status = str(
+                d.get("status") or "active"
+            ).strip().lower()
 
-            try:
-                fu = auth.get_user(doc.id)
-                disabled = fu.disabled
-            except Exception:
-                disabled = stored_status in {"blocked", "deleted", "deactivated", "archived"}
-
-            if bool(d.get("isDeleted")) or stored_status in {"deleted", "deactivated", "archived"}:
+            if (
+                bool(d.get("isDeleted"))
+                or stored_status in {
+                    "deleted",
+                    "deactivated",
+                    "archived",
+                }
+            ):
                 display_status = "deleted"
-            elif stored_status == "blocked" or disabled:
+            elif stored_status == "blocked":
                 display_status = "blocked"
             else:
                 display_status = "active"
