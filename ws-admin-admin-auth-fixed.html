@@ -355,6 +355,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 .bdg.oth{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.5);border:1px solid rgba(255,255,255,0.1);}
 .bdg.mon{background:rgba(251,191,36,0.1);color:#fbbf24;border:1px solid rgba(251,191,36,0.2);}
 .bdg.saf{background:rgba(74,222,128,0.1);color:#4ade80;border:1px solid rgba(74,222,128,0.2);}
+.bdg.del{background:rgba(201,168,76,0.1);color:var(--g);border:1px solid rgba(201,168,76,0.25);}
 
 /* ── ACTION BUTTONS ── */
 .ab{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);padding:5px 12px;border-radius:8px;font-size:10px;font-weight:700;cursor:pointer;transition:all 0.15s;margin-right:4px;color:rgba(255,255,255,0.6);font-family:'Inter',sans-serif;}
@@ -540,7 +541,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
         <div class="lerr" id="lerr">⚠️ Invalid credentials. Please try again.</div>
       </div>
       <button class="lbtn" onclick="doLogin()">🔐 &nbsp;Access Dashboard</button>
-      <div class="l-foot"><span>🔒 WS App Admin Panel • v1.0 • </span></div>
+      <div class="l-foot"><span>🔒 WS App Admin Panel • v1.0 • 2026</span></div>
     </div>
   </div>
 </div>
@@ -616,10 +617,10 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 
     <!-- USERS -->
     <div class="pg" id="pg-users">
-      <div class="pg-hd"><h2>User Management</h2><p>Manage registered users from Firebase</p></div>
+      <div class="pg-hd"><h2>User Management</h2><p>Manage registered and archived users from Firebase</p></div>
       <div class="gc tc">
         <div class="tc-hd"><div><h3>👥 All Users</h3><p id="usersSummary">0 registered users</p></div><div class="tc-acts"><button class="tbtn o" onclick="exportUsers()">⬇ Export</button></div></div>
-        <div class="sb-bar"><input class="si" id="userSearch" placeholder="🔍  Search name, phone, email..."/><select class="fsel" id="userFilter"><option value="all">All Status</option><option value="active">Active</option><option value="blocked">Blocked</option></select><button class="ab vw" onclick="loadUsers()">↻ Refresh</button></div>
+        <div class="sb-bar"><input class="si" id="userSearch" placeholder="🔍  Search name, phone, email..."/><select class="fsel" id="userFilter"><option value="all">All Status</option><option value="active">Active</option><option value="blocked">Blocked</option><option value="deleted">Archived</option></select><button class="ab vw" onclick="loadUsers()">↻ Refresh</button></div>
         <div class="table-wrap"><table><thead><tr><th>#</th><th>User</th><th>Phone</th><th>Gmail</th><th>Joined</th><th>Status</th><th>Actions</th></tr></thead><tbody id="usersBody"><tr><td colspan="7"><div class="empty-state">Loading real users...</div></td></tr></tbody></table></div>
       </div>
     </div>
@@ -718,7 +719,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 </div>
 
 <script>
-const API_BASE = 'http://127.0.0.1:5000';
+const API_BASE = 'https://wsapp-9w4r.onrender.com';
 let adminToken = sessionStorage.getItem('wsAdminToken') || '';
 let allUsers = [], allComplaints = [], allSos = [], allChat = [], allAnnouncements = [], allHelplines = [];
 
@@ -757,22 +758,66 @@ async function loadUsers(){
   try{const data=await api('/api/admin/users');allUsers=data.users||[];renderUsers();document.getElementById('dashboardUsersCount').textContent=allUsers.length;document.getElementById('sidebarUsersCount').textContent=allUsers.length;}
   catch(e){if(body)body.innerHTML=errRow(7,e.message+' — make sure Flask backend is running.');}
 }
-function userStatus(u){return u.status==='blocked'?'Blocked':'Active';}
+function userStatus(u){
+  const status=String(u?.status||'active').toLowerCase();
+  if(status==='deleted'||status==='deactivated'||status==='archived') return 'Deleted';
+  if(status==='blocked') return 'Blocked';
+  return 'Active';
+}
+function userStatusKey(u){return userStatus(u).toLowerCase();}
 function renderUsers(){
   const body=document.getElementById('usersBody'); if(!body)return;
-  const q=(document.getElementById('userSearch')?.value||'').trim().toLowerCase(); const f=document.getElementById('userFilter')?.value||'all';
-  const filtered=allUsers.filter(u=>{const st=userStatus(u).toLowerCase();const text=[u.fullName,u.phone,u.email,u.uid].join(' ').toLowerCase();return (!q||text.includes(q))&&(f==='all'||(f==='active'&&st==='active')||(f==='blocked'&&st==='blocked'));});
-  document.getElementById('usersSummary').textContent=allUsers.length+' registered users';
-  if(!filtered.length){body.innerHTML='<tr><td colspan="7"><div class="empty-state">No real users found.</div></td></tr>';return;}
+  const q=(document.getElementById('userSearch')?.value||'').trim().toLowerCase();
+  const f=document.getElementById('userFilter')?.value||'all';
+  const filtered=allUsers.filter(u=>{
+    const st=userStatusKey(u);
+    const text=[u.fullName,u.phone,u.email,u.uid].join(' ').toLowerCase();
+    return (!q||text.includes(q)) && (f==='all'||f===st);
+  });
+  const deletedCount=allUsers.filter(u=>userStatusKey(u)==='deleted').length;
+  document.getElementById('usersSummary').textContent=allUsers.length+' users • '+deletedCount+' archived';
+  if(!filtered.length){body.innerHTML='<tr><td colspan="7"><div class="empty-state">No users found for this filter.</div></td></tr>';return;}
   body.innerHTML=filtered.map((u,i)=>{
-    const blocked=userStatus(u)==='Blocked'; const action=blocked?'Unblock':'Block';
-    return `<tr><td style="color:rgba(255,255,255,.3)">${String(i+1).padStart(3,'0')}</td><td><div class="uc"><div class="uav b">${esc(initials(u.fullName))}</div><div><div class="un">${esc(u.fullName||'Unnamed User')}</div><div class="up2">WS App User</div></div></div></td><td>${esc(u.phone||'—')}</td><td>${esc(u.email||'—')}</td><td>${fmtDate(u.createdAt)}</td><td><span class="bdg ${blocked?'blk':'act'}">${blocked?'✕ Blocked':'● Active'}</span></td><td><div class="action-group"><button class="ab vw" onclick="viewUser('${esc(u.uid)}')">View</button><button class="ab ${blocked?'rs success-btn':'bl2 danger-btn'}" onclick="toggleUser('${esc(u.uid)}',${blocked})">${action}</button></div></td></tr>`;
+    const st=userStatus(u);
+    const isDeleted=st==='Deleted';
+    const isBlocked=st==='Blocked';
+    let actionHtml='';
+    if(isDeleted){
+      actionHtml=`<button class="ab rs success-btn" onclick="restoreUser('${esc(u.uid)}')">↻ Restore</button>`;
+    }else{
+      actionHtml=`<button class="ab ${isBlocked?'rs success-btn':'bl2 danger-btn'}" onclick="toggleUser('${esc(u.uid)}',${isBlocked})">${isBlocked?'Unblock':'Block'}</button>`;
+      actionHtml+=`<button class="ab dl danger-btn" onclick="archiveUser('${esc(u.uid)}')">Archive</button>`;
+    }
+    const badgeClass=isDeleted?'del':isBlocked?'blk':'act';
+    const badgeText=isDeleted?'▣ Archived':isBlocked?'✕ Blocked':'● Active';
+    return `<tr><td style="color:rgba(255,255,255,.3)">${String(i+1).padStart(3,'0')}</td><td><div class="uc"><div class="uav b">${esc(initials(u.fullName))}</div><div><div class="un">${esc(u.fullName||'Unnamed User')}</div><div class="up2">WS App User</div></div></div></td><td>${esc(u.phone||'—')}</td><td>${esc(u.email||'—')}</td><td>${fmtDate(u.createdAt)}</td><td><span class="bdg ${badgeClass}">${badgeText}</span></td><td><div class="action-group"><button class="ab vw" onclick="viewUser('${esc(u.uid)}')">View</button>${actionHtml}</div></td></tr>`;
   }).join('');
 }
 function viewUser(uid){const u=allUsers.find(x=>x.uid===uid);if(!u)return;showModal('User Details','<div class="meta">Firebase user record</div><div class="kv-grid"><div class="kv"><span>Full Name</span><strong>'+esc(u.fullName||'—')+'</strong></div><div class="kv"><span>Phone</span><strong>'+esc(u.phone||'—')+'</strong></div><div class="kv"><span>Email</span><strong>'+esc(u.email||'—')+'</strong></div><div class="kv"><span>Status</span><strong>'+esc(userStatus(u))+'</strong></div><div class="kv"><span>Joined</span><strong>'+fmtDateTime(u.createdAt)+'</strong></div><div class="kv"><span>UID</span><strong>'+esc(u.uid||'—')+'</strong></div></div><div class="data-note">🔒 Password is never displayed. Firebase Authentication manages passwords securely.</div>');}
 async function toggleUser(uid,blocked){
-  const u=allUsers.find(x=>x.uid===uid); if(!u)return; const action=blocked?'Unblock':'Block'; if(!confirm(action+' '+(u.fullName||'this user')+'?'))return;
-  try{await api('/api/admin/users/'+encodeURIComponent(uid)+'/status',{method:'PATCH',body:JSON.stringify({blocked:!blocked})});await loadUsers();}catch(e){alert(e.message);}
+  const u=allUsers.find(x=>x.uid===uid); if(!u)return;
+  const action=blocked?'Unblock':'Block';
+  if(!confirm(action+' '+(u.fullName||'this user')+'?'))return;
+  try{
+    await api('/api/admin/users/'+encodeURIComponent(uid)+'/status',{method:'PATCH',body:JSON.stringify({blocked:!blocked})});
+    await loadUsers();
+  }catch(e){alert(e.message);}
+}
+async function archiveUser(uid){
+  const u=allUsers.find(x=>x.uid===uid); if(!u)return;
+  if(!confirm('Archive '+(u.fullName||'this user')+'? The user will be disabled but their profile will be kept for restore.'))return;
+  try{
+    await api('/api/admin/users/'+encodeURIComponent(uid)+'/status',{method:'PATCH',body:JSON.stringify({status:'deleted'})});
+    await loadUsers();
+  }catch(e){alert(e.message);}
+}
+async function restoreUser(uid){
+  const u=allUsers.find(x=>x.uid===uid); if(!u)return;
+  if(!confirm('Restore '+(u.fullName||'this user')+'?'))return;
+  try{
+    await api('/api/admin/users/'+encodeURIComponent(uid)+'/restore',{method:'POST'});
+    await loadUsers();
+  }catch(e){alert(e.message);}
 }
 function exportUsers(){const rows=[['UID','Full Name','Phone','Email','Joined','Status'],...allUsers.map(u=>[u.uid,u.fullName,u.phone,u.email,fmtDateTime(u.createdAt),userStatus(u)])];downloadCsv('ws-app-users.csv',rows);}
 
