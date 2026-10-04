@@ -403,46 +403,6 @@ def build_wsapp_email_html(full_name: str, verification_link: str) -> str:
 </html>"""
 
 
-def send_brevo_email(to_email, to_name, subject, text_content, html_content=None):
-    brevo_key = os.getenv("BREVO_API_KEY", "").strip()
-    from_email = (
-        os.getenv("BREVO_FROM_EMAIL")
-        or os.getenv("SMTP_USER")
-        or ""
-    ).strip().lower()
-    from_name = (
-        os.getenv("BREVO_FROM_NAME")
-        or os.getenv("SMTP_FROM_NAME")
-        or "WS App"
-    ).strip() or "WS App"
-
-    if not brevo_key or not from_email or not to_email:
-        return False
-
-    payload = {
-        "sender": {"name": from_name, "email": from_email},
-        "to": [{"email": to_email, "name": to_name or "WS App User"}],
-        "subject": subject,
-        "htmlContent": html_content or "<pre style='font-family:Arial,sans-serif;white-space:pre-wrap'>" + text_content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "</pre>",
-        "textContent": text_content,
-    }
-
-    try:
-        response = requests.post(
-            "https://api.brevo.com/v3/smtp/email",
-            headers={
-                "accept": "application/json",
-                "api-key": brevo_key,
-                "content-type": "application/json",
-            },
-            json=payload,
-            timeout=20,
-        )
-        return bool(response.ok)
-    except Exception:
-        return False
-
-
 def send_verification_welcome_email(
     to_email: str,
     full_name: str,
@@ -550,6 +510,33 @@ def register():
             return jsonify(
                 {"success": False, "message": "Phone number is required."}
             ), 400
+
+        # Phone numbers must be exactly 10 digits and unique across all
+        # registered users, just like Firebase Auth enforces unique emails.
+        phone = re.sub(r"\D", "", phone)
+
+        if not re.fullmatch(r"\d{10}", phone):
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Enter a valid 10-digit mobile number.",
+                }
+            ), 400
+
+        existing_phone = (
+            db.collection("users")
+            .where("phone", "==", phone)
+            .limit(1)
+            .stream()
+        )
+
+        if next(existing_phone, None) is not None:
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "This mobile number is already registered.",
+                }
+            ), 409
 
         if not email:
             return jsonify(
@@ -795,89 +782,6 @@ def login():
                 "error": str(e),
             }
         ), 500
-
-
-@app.post("/api/forgot-password")
-def forgot_password():
-    """Send a Firebase password-reset link to the email registered for a phone number."""
-    try:
-        data = request.get_json(silent=True) or {}
-        phone = re.sub(r"\D", "", str(data.get("phone", "")))[:10]
-
-        if not re.fullmatch(r"\d{10}", phone):
-            return jsonify({
-                "success": False,
-                "message": "Enter a valid 10-digit mobile number.",
-            }), 400
-
-        docs = (
-            db.collection("users")
-            .where("phone", "==", phone)
-            .limit(1)
-            .stream()
-        )
-        doc = next(docs, None)
-
-        # Do not reveal whether a phone number is registered.
-        generic_message = (
-            "If an account is registered with this number, a password-reset email "
-            "has been sent to its registered email address."
-        )
-
-        if doc is None:
-            return jsonify({"success": True, "message": generic_message}), 200
-
-        user_data = doc.to_dict() or {}
-        email = str(user_data.get("email", "")).strip().lower()
-        if not email:
-            return jsonify({"success": True, "message": generic_message}), 200
-
-        reset_link = auth.generate_password_reset_link(email)
-        safe_name = str(user_data.get("fullName", "WS App User")).strip() or "WS App User"
-
-        html = f"""
-        <div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:28px;background:#fdf8f9;color:#24101c;border-radius:18px;">
-          <h2 style="color:#5C0A2D;margin-top:0;">WS App — Reset Your Password</h2>
-          <p>Hello {safe_name},</p>
-          <p>We received a request to reset your WS App password.</p>
-          <p style="margin:24px 0;">
-            <a href="{reset_link}" style="display:inline-block;padding:13px 20px;background:#C9A84C;color:#1A0310;text-decoration:none;border-radius:10px;font-weight:800;">Reset Password</a>
-          </p>
-          <p style="font-size:12px;color:#6f6269;line-height:1.6;">For your security, this link is intended only for your WS App account. If you did not request this, you can ignore this email.</p>
-          <p>Stay safe,<br><strong>WS App Team</strong></p>
-        </div>
-        """
-        text = (
-            "WS App — Reset Your Password\n\n"
-            f"Hello {safe_name},\n\n"
-            "We received a request to reset your WS App password.\n\n"
-            f"Reset your password here:\n{reset_link}\n\n"
-            "If you did not request this, you can ignore this email.\n\n"
-            "WS App Team"
-        )
-
-        email_sent = send_brevo_email(
-            email,
-            safe_name,
-            "WS App — Reset Your Password",
-            text,
-            html,
-        )
-
-        if not email_sent:
-            return jsonify({
-                "success": False,
-                "message": "Password reset email could not be sent right now. Please try again later.",
-            }), 503
-
-        return jsonify({"success": True, "message": generic_message}), 200
-
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to process password recovery right now.",
-            "error": str(e),
-        }), 500
 
 
 # ---------------- USER ACCOUNT SOFT-DELETE ----------------
@@ -1718,190 +1622,6 @@ def admin_sos_status(doc_id):
         ), 500
 
 
-# ---------------- USER COMPLAINTS ----------------
-
-@app.post("/api/complaints")
-def create_complaint():
-    try:
-        decoded, error_response = require_user_from_token()
-        if error_response is not None:
-            return error_response
-
-        data = request.get_json(silent=True) or {}
-        category = str(data.get("category", "")).strip()
-        description = str(data.get("description", "")).strip()
-        location = str(data.get("location", "")).strip()
-
-        allowed_categories = {
-            "Harassment",
-            "Stalking",
-            "Abuse",
-            "Threat",
-            "Cyber Crime",
-            "Other",
-        }
-
-        if category not in allowed_categories:
-            return jsonify({"success": False, "message": "Select a valid complaint category."}), 400
-
-        if len(description) < 10:
-            return jsonify({"success": False, "message": "Please describe the incident in more detail."}), 400
-
-        uid = str(decoded.get("uid") or "").strip()
-        email = str(decoded.get("email") or "").strip().lower()
-
-        if not email:
-            try:
-                user_record = auth.get_user(uid)
-                email = str(user_record.email or "").strip().lower()
-            except Exception:
-                email = ""
-
-        doc_ref = db.collection("complaints").document()
-        doc_ref.set(
-            {
-                "uid": uid,
-                "userEmail": email,
-                "category": category,
-                "description": description,
-                "location": location,
-                "status": "pending",
-                "adminResponse": "",
-                "createdAt": firestore.SERVER_TIMESTAMP,
-                "updatedAt": firestore.SERVER_TIMESTAMP,
-            }
-        )
-
-        return jsonify({
-            "success": True,
-            "message": "Complaint submitted successfully.",
-            "id": doc_ref.id,
-            "status": "pending",
-        }), 201
-
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to submit complaint.",
-            "error": str(e),
-        }), 500
-
-
-@app.get("/api/complaints")
-def user_complaints():
-    try:
-        decoded, error_response = require_user_from_token()
-        if error_response is not None:
-            return error_response
-
-        uid = str(decoded.get("uid") or "").strip()
-        rows = []
-        for doc in db.collection("complaints").where("uid", "==", uid).stream():
-            item = serialize(doc.to_dict() or {})
-            item["id"] = doc.id
-            # Never expose the internal email/uid back to the app UI.
-            item.pop("uid", None)
-            item.pop("userEmail", None)
-            rows.append(item)
-
-        rows.sort(
-            key=lambda x: str(x.get("createdAt") or x.get("updatedAt") or ""),
-            reverse=True,
-        )
-
-        return jsonify({"success": True, "complaints": rows, "total": len(rows)})
-
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to load your complaints.",
-            "error": str(e),
-        }), 500
-
-
-# Anonymous complaint endpoints: no login token required.
-# A random client key stored on the same device/browser is used only to
-# retrieve that user's own complaint history and admin responses.
-@app.post("/api/complaints/public")
-def create_public_complaint():
-    try:
-        data = request.get_json(silent=True) or {}
-        client_key = str(data.get("clientKey", "")).strip()
-        category = str(data.get("category", "")).strip()
-        description = str(data.get("description", "")).strip()
-        location = str(data.get("location", "")).strip()
-
-        allowed_categories = {
-            "Harassment",
-            "Stalking",
-            "Abuse",
-            "Threat",
-            "Cyber Crime",
-            "Other",
-        }
-
-        if len(client_key) < 20:
-            return jsonify({"success": False, "message": "Invalid report session."}), 400
-        if category not in allowed_categories:
-            return jsonify({"success": False, "message": "Select a valid complaint category."}), 400
-        if len(description) < 10:
-            return jsonify({"success": False, "message": "Please describe the incident in more detail."}), 400
-
-        doc_ref = db.collection("complaints").document()
-        doc_ref.set({
-            "clientKey": client_key,
-            "category": category,
-            "description": description,
-            "location": location,
-            "status": "pending",
-            "adminResponse": "",
-            "createdAt": firestore.SERVER_TIMESTAMP,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-        })
-
-        return jsonify({
-            "success": True,
-            "message": "Complaint submitted successfully.",
-            "id": doc_ref.id,
-            "status": "pending",
-        }), 201
-
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to submit complaint.",
-            "error": str(e),
-        }), 500
-
-
-@app.get("/api/complaints/public")
-def public_complaints():
-    try:
-        client_key = str(request.args.get("clientKey", "")).strip()
-        if len(client_key) < 20:
-            return jsonify({"success": False, "message": "Invalid report session."}), 400
-
-        rows = []
-        for doc in db.collection("complaints").where("clientKey", "==", client_key).stream():
-            item = serialize(doc.to_dict() or {})
-            item["id"] = doc.id
-            item.pop("clientKey", None)
-            rows.append(item)
-
-        rows.sort(
-            key=lambda x: str(x.get("createdAt") or x.get("updatedAt") or ""),
-            reverse=True,
-        )
-        return jsonify({"success": True, "complaints": rows, "total": len(rows)})
-
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to load your complaints.",
-            "error": str(e),
-        }), 500
-
-
 @app.get("/api/admin/complaints")
 def admin_complaints():
     try:
@@ -1940,8 +1660,10 @@ def admin_complaints():
 def admin_complaint_status(doc_id):
     try:
         data = request.get_json(silent=True) or {}
-        status = str(data.get("status", "")).strip().lower()
-        admin_response = str(data.get("adminResponse", "")).strip()
+
+        status = str(
+            data.get("status", "")
+        ).strip().lower()
 
         if status not in {
             "pending",
@@ -1949,66 +1671,41 @@ def admin_complaint_status(doc_id):
             "resolved",
             "rejected",
         }:
-            return jsonify({
-                "success": False,
-                "message": "Invalid complaint status.",
-            }), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Invalid complaint status.",
+                }
+            ), 400
 
-        if status == "resolved" and len(admin_response) < 3:
-            return jsonify({
-                "success": False,
-                "message": "Please enter the response sent to the user before resolving.",
-            }), 400
-
-        complaint_ref = db.collection("complaints").document(doc_id)
-        snap = complaint_ref.get()
-        if not snap.exists:
-            return jsonify({"success": False, "message": "Complaint not found."}), 404
-
-        existing = snap.to_dict() or {}
         payload = {
             "status": status,
             "updatedAt": firestore.SERVER_TIMESTAMP,
         }
 
-        if admin_response:
-            payload["adminResponse"] = admin_response
-            payload["responseAt"] = firestore.SERVER_TIMESTAMP
-
         if status == "resolved":
             payload["resolvedAt"] = firestore.SERVER_TIMESTAMP
 
-        complaint_ref.set(payload, merge=True)
+        db.collection("complaints").document(doc_id).set(
+            payload,
+            merge=True,
+        )
 
-        email_sent = False
-        user_email = str(existing.get("userEmail") or "").strip().lower()
-        if status == "resolved" and user_email and admin_response:
-            email_sent = send_brevo_email(
-                user_email,
-                "WS App User",
-                "WS App — Complaint Resolved",
-                (
-                    "Your WS App complaint has been marked as resolved.\n\n"
-                    f"Category: {existing.get('category', '')}\n"
-                    f"Admin Response: {admin_response}\n\n"
-                    "Please open WS App to view the latest complaint status.\n\n"
-                    "WS App Team"
-                ),
-            )
-
-        return jsonify({
-            "success": True,
-            "status": status,
-            "adminResponse": admin_response,
-            "emailSent": email_sent,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "status": status,
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to update complaint.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to update complaint.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.get("/api/admin/chat")
