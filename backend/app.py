@@ -523,14 +523,22 @@ def register():
                 }
             ), 400
 
+        # Accept either canonical 10-digit storage or the older +91-prefixed
+        # storage format, and treat both as the same mobile number.
         existing_phone = (
             db.collection("users")
             .where("phone", "==", phone)
             .limit(1)
             .stream()
         )
+        existing_phone_india = (
+            db.collection("users")
+            .where("phone", "==", "+91" + phone)
+            .limit(1)
+            .stream()
+        )
 
-        if next(existing_phone, None) is not None:
+        if next(existing_phone, None) is not None or next(existing_phone_india, None) is not None:
             return jsonify(
                 {
                     "success": False,
@@ -669,6 +677,8 @@ def login():
                 }
             ), 500
 
+        # The admin screen may show +91 because some existing user records
+        # use the India-prefixed format. Match both formats during login.
         docs = (
             db.collection("users")
             .where("phone", "==", phone)
@@ -677,6 +687,15 @@ def login():
         )
 
         doc = next(docs, None)
+
+        if doc is None:
+            docs_india = (
+                db.collection("users")
+                .where("phone", "==", "+91" + phone)
+                .limit(1)
+                .stream()
+            )
+            doc = next(docs_india, None)
 
         if doc is None:
             return jsonify(
@@ -1463,6 +1482,49 @@ def admin_user_status(uid):
         return jsonify({
             "success": False,
             "message": "Unable to update user status.",
+            "error": str(e),
+        }), 500
+
+
+@app.post("/api/admin/users/<uid>/reset-password")
+def admin_reset_user_password(uid):
+    """Allow an authenticated admin to set a new password for a user.
+
+    Existing passwords are never readable from Firebase Authentication.
+    This route intentionally replaces the password rather than exposing it.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        new_password = str(data.get("newPassword") or "")
+
+        if len(new_password) < 6:
+            return jsonify({
+                "success": False,
+                "message": "New password must contain at least 6 characters.",
+            }), 400
+
+        user = auth.get_user(uid)
+        auth.update_user(uid, password=new_password)
+
+        db.collection("users").document(uid).set({
+            "passwordChangedAt": firestore.SERVER_TIMESTAMP,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+
+        return jsonify({
+            "success": True,
+            "message": f"Password reset successfully for {user.email or 'this user'}.",
+        }), 200
+
+    except auth.UserNotFoundError:
+        return jsonify({
+            "success": False,
+            "message": "User account was not found.",
+        }), 404
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Unable to reset user password.",
             "error": str(e),
         }), 500
 
