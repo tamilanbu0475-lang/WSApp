@@ -1,8 +1,8 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Linking, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
+import { loadSession } from './session-storage';
 
 const HELPLINES = [
   { name: 'Women Helpline', number: '1091', icon: '👩', color: '#C9A84C' },
@@ -15,7 +15,6 @@ const QUICK = [
   { label: 'Emergency\nContacts', icon: '👥', route: '/contacts', color: '#C9A84C' },
   { label: 'Report\nIncident', icon: '📋', route: '/report', color: '#4ade80' },
   { label: 'AI Support', icon: '🤖', route: '/support', color: '#a78bfa' },
-  { label: 'Alert\nMode', icon: '🚨', route: '/alert', color: '#f87171' },
   { label: 'Safety\nInformation', icon: '🛡️', route: '/safety-info', color: '#60a5fa' },
 ];
 
@@ -33,36 +32,42 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
-  const params = useLocalSearchParams<{
-    fullName?: string;
-    phone?: string;
-    email?: string;
-    uid?: string;
-  }>();
+  const params = useLocalSearchParams<{ fullName?: string; phone?: string; email?: string; uid?: string }>();
 
-  const [sessionUser, setSessionUser] = useState({ fullName: '', phone: '', email: '', uid: '' });
+  const [sessionUser, setSessionUser] = useState({
+    fullName: String(params.fullName ?? '').trim(),
+    phone: String(params.phone ?? '').trim(),
+    email: String(params.email ?? '').trim(),
+    uid: String(params.uid ?? '').trim(),
+  });
 
   useEffect(() => {
     let active = true;
-    AsyncStorage.getItem('wsUser').then((raw) => {
-      if (!active || !raw) return;
+    (async () => {
       try {
-        const parsed = JSON.parse(raw);
-        if (parsed) setSessionUser({
-          fullName: String(parsed.fullName ?? ''),
-          phone: String(parsed.phone ?? ''),
-          email: String(parsed.email ?? ''),
-          uid: String(parsed.uid ?? ''),
+        const { user, token } = await loadSession();
+        if (!token || !user) {
+          router.replace('/login' as any);
+          return;
+        }
+        if (!active) return;
+        setSessionUser({
+          fullName: String(params.fullName ?? user.fullName ?? user.name ?? '').trim(),
+          phone: String(params.phone ?? user.phone ?? '').trim(),
+          email: String(params.email ?? user.email ?? '').trim(),
+          uid: String(params.uid ?? user.uid ?? user.id ?? '').trim(),
         });
-      } catch {}
-    });
+      } catch {
+        router.replace('/login' as any);
+      }
+    })();
     return () => { active = false; };
   }, []);
 
-  const fullName = String(params.fullName ?? '').trim() || sessionUser.fullName || 'User';
-  const phone = String(params.phone ?? '').trim() || sessionUser.phone;
-  const email = String(params.email ?? '').trim() || sessionUser.email;
-  const uid = String(params.uid ?? '').trim() || sessionUser.uid;
+  const fullName = sessionUser.fullName;
+  const phone = sessionUser.phone;
+  const email = sessionUser.email;
+  const uid = sessionUser.uid;
   const initials = getInitials(fullName);
   const pulseOuter = useRef(new Animated.Value(1)).current;
   const pulseMid = useRef(new Animated.Value(1)).current;
@@ -100,6 +105,7 @@ export default function HomeScreen() {
     loop.start();
     return () => loop.stop();
   }, [pulseOuter, pulseMid]);
+
 
   return (
     <View style={styles.container}>
@@ -213,9 +219,9 @@ export default function HomeScreen() {
               pathname: '/profile',
               params: {
                 fullName,
-                phone: String(params.phone ?? ''),
-                email: String(params.email ?? ''),
-                uid: String(params.uid ?? ''),
+                phone,
+                email,
+                uid,
               },
             } as any)
           }

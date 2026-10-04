@@ -37,7 +37,7 @@ export default function LoginScreen() {
   const pwdRef = useRef<TextInput>(null);
 
   const BACKEND_URL =
-    process.env.EXPO_PUBLIC_BACKEND_URL || 'http://10.81.141.192:5000';
+    process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
 
   const handleLogin = async () => {
     if (loading) return;
@@ -101,6 +101,14 @@ export default function LoginScreen() {
       };
       await AsyncStorage.setItem('wsUser', JSON.stringify(sessionUser));
       if (result.token) await AsyncStorage.setItem('wsToken', String(result.token));
+
+      // Keep a synchronous browser copy so web refresh can restore the page immediately.
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+        try {
+          window.localStorage.setItem('wsUser', JSON.stringify(sessionUser));
+          if (result.token) window.localStorage.setItem('wsToken', String(result.token));
+        } catch {}
+      }
 
       Animated.timing(progressAnim, {
         toValue: 1,

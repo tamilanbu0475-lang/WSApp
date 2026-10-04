@@ -1,8 +1,8 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  Platform,
   Animated,
   ScrollView,
   StatusBar,
@@ -15,68 +15,77 @@ import {
 } from 'react-native';
 
 import ScreenBackground from '../components/ScreenBackground';
+import { loadSession, getUserStorage, getSessionToken, clearSession } from './session-storage';
 
 export default function ProfileScreen() {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
-  const params = useLocalSearchParams<{
-    fullName?: string;
-    phone?: string;
-    email?: string;
-    uid?: string;
-  }>();
+  const params = useLocalSearchParams<{ fullName?: string; phone?: string; email?: string; uid?: string }>();
 
-  const [isEditing, setIsEditing] = useState(false);
-  const [fullName, setFullName] = useState(String(params.fullName ?? '').trim() || 'User');
-  const [phone, setPhone] = useState(String(params.phone ?? '').trim());
-  const [gmail, setGmail] = useState(String(params.email ?? '').trim().toLowerCase());
   const [profileUid, setProfileUid] = useState(String(params.uid ?? '').trim());
   const [contactCount, setContactCount] = useState(0);
   const [sosCount, setSosCount] = useState(0);
   const [reportCount, setReportCount] = useState(0);
 
-  const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
+  const [isEditing, setIsEditing] = useState(false);
+  const [fullName, setFullName] = useState(String(params.fullName ?? '').trim());
+  const [phone, setPhone] = useState(String(params.phone ?? '').trim());
+  const [gmail, setGmail] = useState(String(params.email ?? '').trim().toLowerCase());
 
   useEffect(() => {
-    let active = true;
+    let alive = true;
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem('wsUser');
-        if (!raw || !active) return;
-        const u = JSON.parse(raw) || {};
-        if (!String(params.fullName ?? '').trim()) setFullName(String(u.fullName ?? u.name ?? 'User'));
-        if (!String(params.phone ?? '').trim()) setPhone(String(u.phone ?? ''));
-        if (!String(params.email ?? '').trim()) setGmail(String(u.email ?? '').toLowerCase());
-        setProfileUid(String(params.uid ?? '').trim() || String(u.uid ?? u.id ?? ''));
-      } catch {}
-    })();
-    return () => { active = false; };
-  }, []);
+        const { user, token } = await loadSession();
 
-  useEffect(() => {
-    if (!profileUid) return;
-    (async () => {
-      try {
-        const token = await AsyncStorage.getItem('wsToken');
-        if (token) {
-          const res = await fetch(`${BACKEND_URL}/api/user/stats`, {
+        // Profile is protected. Do not render stale route parameters or old
+        // cached names when the user is not signed in.
+        if (!token || !user) {
+          router.replace('/login' as any);
+          return;
+        }
+
+        if (!alive) return;
+
+        const uid = String(user.uid ?? user.id ?? '').trim();
+        setProfileUid(String(params.uid ?? uid).trim());
+        setFullName(String(params.fullName ?? user.fullName ?? user.name ?? '').trim());
+        setPhone(String(params.phone ?? user.phone ?? '').trim());
+        setGmail(String(params.email ?? user.email ?? '').trim().toLowerCase());
+
+        if (uid) {
+          const rawContacts = await getUserStorage(`wsapp_emergency_contacts_${uid.toLowerCase()}`);
+          if (!alive) return;
+          try {
+            setContactCount(
+              rawContacts
+                ? (Array.isArray(JSON.parse(rawContacts)) ? JSON.parse(rawContacts).length : 0)
+                : 0
+            );
+          } catch {
+            setContactCount(0);
+          }
+        }
+
+        try {
+          const api = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
+          const res = await fetch(`${api}/api/user/stats`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           const data = await res.json().catch(() => null);
-          if (res.ok && data?.success) {
+          if (alive && res.ok && data?.success) {
             setSosCount(Number(data.sosCount || 0));
             setReportCount(Number(data.reportCount || 0));
           }
-        }
-      } catch {}
-      try {
-        const raw = await AsyncStorage.getItem(`wsapp_emergency_contacts_${profileUid.toLowerCase()}`);
-        const parsed = raw ? JSON.parse(raw) : [];
-        setContactCount(Array.isArray(parsed) ? parsed.length : 0);
-      } catch { setContactCount(0); }
+        } catch {}
+
+      } catch {
+        router.replace('/login' as any);
+      }
     })();
-  }, [profileUid]);
+    return () => { alive = false; };
+  }, []);
 
   const saveAnim = useRef(
     new Animated.Value(1)
@@ -100,17 +109,79 @@ export default function ProfileScreen() {
   };
 
   const handleLogout = () => {
+    const performLogout = async () => {
+      await clearSession();
+      router.replace('/login' as any);
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm('Logout\n\nAre you sure you want to logout?')) {
+        void performLogout();
+      }
+      return;
+    }
+
     Alert.alert('Logout', 'Are you sure?', [
-      {
-        text: 'Cancel',
-        style: 'cancel',
-      },
-      {
-        text: 'Logout',
-        style: 'destructive',
-        onPress: () =>
-          router.replace('/login' as any),
-      },
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Logout', style: 'destructive', onPress: () => { void performLogout(); } },
+    ]);
+  };
+
+  const handleDeleteAccount = () => {
+    const performDelete = async () => {
+      try {
+        const token = await getSessionToken();
+        if (!token) {
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.alert('Please login again before deleting your account.');
+          } else {
+            Alert.alert('Session Expired', 'Please login again before deleting your account.');
+          }
+          return;
+        }
+
+        const api = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
+        const res = await fetch(`${api}/api/account/deactivate`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok || !data?.success) {
+          throw new Error(String(data?.message || 'Unable to delete your account.'));
+        }
+
+        await clearSession();
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert('Your WS App account has been deactivated successfully.');
+          router.replace('/login' as any);
+        } else {
+          Alert.alert('Account Deleted', 'Your WS App account has been deactivated. You can recover it through the administrator restore flow.', [
+            { text: 'OK', onPress: () => router.replace('/login' as any) },
+          ]);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to delete your account.';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`Delete Failed\n\n${message}`);
+        } else {
+          Alert.alert('Delete Failed', message);
+        }
+      }
+    };
+
+    const message = 'This will deactivate your WS App account and keep your safety records securely for recovery and audit. Continue?';
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Delete Account\n\n${message}`)) {
+        void performDelete();
+      }
+      return;
+    }
+
+    Alert.alert('Delete Account', message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete Account', style: 'destructive', onPress: () => { void performDelete(); } },
     ]);
   };
 
@@ -121,6 +192,7 @@ export default function ProfileScreen() {
       .join('')
       .toUpperCase()
       .slice(0, 2);
+
 
   return (
     <View style={styles.container}>
@@ -255,24 +327,12 @@ export default function ProfileScreen() {
             <View style={styles.statsRow}>
               {[
                 [String(contactCount), 'Contacts'],
-                [String(sosCount), 'SOS Drills'],
+                [String(sosCount), 'SOS Alerts'],
                 [String(reportCount), 'Reports'],
               ].map(([num, label], index) => (
-                <View
-                  key={label}
-                  style={[
-                    styles.statCard,
-                    index === 1 &&
-                      styles.statCardActive,
-                  ]}
-                >
-                  <Text style={styles.statNum}>
-                    {num}
-                  </Text>
-
-                  <Text style={styles.statLbl}>
-                    {label}
-                  </Text>
+                <View key={label} style={[styles.statCard, index === 1 && styles.statCardActive]}>
+                  <Text style={styles.statNum}>{num}</Text>
+                  <Text style={styles.statLbl}>{label}</Text>
                 </View>
               ))}
             </View>
@@ -506,6 +566,33 @@ export default function ProfileScreen() {
                 Your data is encrypted and stored securely.
                 We never share your personal information.
               </Text>
+            </View>
+          )}
+
+          {/* ACCOUNT SECURITY */}
+          {!isEditing && (
+            <View
+              style={[
+                styles.dangerCard,
+                !isMobile && styles.cardDesktop,
+              ]}
+            >
+              <Text style={styles.dangerIcon}>⚠️</Text>
+
+              <View style={styles.dangerInfo}>
+                <Text style={styles.dangerTitle}>Delete Account</Text>
+                <Text style={styles.dangerSub}>
+                  Permanently delete your WS App account. Your safety history may be retained for audit purposes.
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.deleteBtn}
+                onPress={handleDeleteAccount}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.deleteBtnTxt}>Delete Account</Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -1005,6 +1092,56 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor:
       'rgba(255,255,255,0.06)',
+  },
+
+  dangerCard: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: 'rgba(248,113,113,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.18)',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    paddingHorizontal: 16,
+  },
+
+  dangerIcon: {
+    fontSize: 20,
+  },
+
+  dangerInfo: {
+    flex: 1,
+  },
+
+  dangerTitle: {
+    color: '#f87171',
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+
+  dangerSub: {
+    color: 'rgba(255,255,255,0.48)',
+    fontSize: 11,
+    lineHeight: 16,
+  },
+
+  deleteBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.35)',
+    backgroundColor: 'rgba(248,113,113,0.10)',
+    borderRadius: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+  },
+
+  deleteBtnTxt: {
+    color: '#f87171',
+    fontSize: 12,
+    fontWeight: '800',
   },
 
   privacyCard: {
