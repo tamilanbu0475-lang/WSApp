@@ -797,6 +797,89 @@ def login():
         ), 500
 
 
+@app.post("/api/forgot-password")
+def forgot_password():
+    """Send a Firebase password-reset link to the email registered for a phone number."""
+    try:
+        data = request.get_json(silent=True) or {}
+        phone = re.sub(r"\D", "", str(data.get("phone", "")))[:10]
+
+        if not re.fullmatch(r"\d{10}", phone):
+            return jsonify({
+                "success": False,
+                "message": "Enter a valid 10-digit mobile number.",
+            }), 400
+
+        docs = (
+            db.collection("users")
+            .where("phone", "==", phone)
+            .limit(1)
+            .stream()
+        )
+        doc = next(docs, None)
+
+        # Do not reveal whether a phone number is registered.
+        generic_message = (
+            "If an account is registered with this number, a password-reset email "
+            "has been sent to its registered email address."
+        )
+
+        if doc is None:
+            return jsonify({"success": True, "message": generic_message}), 200
+
+        user_data = doc.to_dict() or {}
+        email = str(user_data.get("email", "")).strip().lower()
+        if not email:
+            return jsonify({"success": True, "message": generic_message}), 200
+
+        reset_link = auth.generate_password_reset_link(email)
+        safe_name = str(user_data.get("fullName", "WS App User")).strip() or "WS App User"
+
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:28px;background:#fdf8f9;color:#24101c;border-radius:18px;">
+          <h2 style="color:#5C0A2D;margin-top:0;">WS App — Reset Your Password</h2>
+          <p>Hello {safe_name},</p>
+          <p>We received a request to reset your WS App password.</p>
+          <p style="margin:24px 0;">
+            <a href="{reset_link}" style="display:inline-block;padding:13px 20px;background:#C9A84C;color:#1A0310;text-decoration:none;border-radius:10px;font-weight:800;">Reset Password</a>
+          </p>
+          <p style="font-size:12px;color:#6f6269;line-height:1.6;">For your security, this link is intended only for your WS App account. If you did not request this, you can ignore this email.</p>
+          <p>Stay safe,<br><strong>WS App Team</strong></p>
+        </div>
+        """
+        text = (
+            "WS App — Reset Your Password\n\n"
+            f"Hello {safe_name},\n\n"
+            "We received a request to reset your WS App password.\n\n"
+            f"Reset your password here:\n{reset_link}\n\n"
+            "If you did not request this, you can ignore this email.\n\n"
+            "WS App Team"
+        )
+
+        email_sent = send_brevo_email(
+            email,
+            safe_name,
+            "WS App — Reset Your Password",
+            text,
+            html,
+        )
+
+        if not email_sent:
+            return jsonify({
+                "success": False,
+                "message": "Password reset email could not be sent right now. Please try again later.",
+            }), 503
+
+        return jsonify({"success": True, "message": generic_message}), 200
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Unable to process password recovery right now.",
+            "error": str(e),
+        }), 500
+
+
 # ---------------- USER ACCOUNT SOFT-DELETE ----------------
 
 def require_user_from_token():

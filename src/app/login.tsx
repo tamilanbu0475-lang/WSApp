@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import {
   Animated,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StatusBar,
@@ -25,6 +26,10 @@ export default function LoginScreen() {
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotPhone, setForgotPhone] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState('');
 
   const progressAnim = useRef(new Animated.Value(0)).current;
   const btnScale = useRef(new Animated.Value(1)).current;
@@ -110,6 +115,45 @@ export default function LoginScreen() {
           ? error.message
           : 'Unable to connect to the backend server.'
       );
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const normalizedPhone = forgotPhone.replace(/\D/g, '').slice(0, 10);
+
+    if (!/^\d{10}$/.test(normalizedPhone)) {
+      setForgotMessage('Enter the same 10-digit mobile number used during registration.');
+      return;
+    }
+
+    try {
+      setForgotLoading(true);
+      setForgotMessage('');
+
+      const response = await fetch(`${BACKEND_URL}/api/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: normalizedPhone }),
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message || 'Unable to process password reset.');
+      }
+
+      setForgotMessage(
+        'If an account is registered with this number, a password-reset email has been sent to its registered email address.'
+      );
+      setForgotPhone('');
+    } catch (err) {
+      setForgotMessage(
+        err instanceof Error
+          ? err.message
+          : 'Unable to connect to the password recovery service.'
+      );
+    } finally {
+      setForgotLoading(false);
     }
   };
 
@@ -253,12 +297,64 @@ export default function LoginScreen() {
             {/* Forgot */}
             <TouchableOpacity
               style={styles.forgotWrap}
-              onPress={() => setError('Password recovery will be added next.')}
+              onPress={() => { setError(''); setForgotMessage(''); setShowForgot(true); }}
             >
               <Text style={styles.forgotTxt}>
                 Forgot Password?
               </Text>
             </TouchableOpacity>
+
+            <Modal
+              visible={showForgot}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setShowForgot(false)}
+            >
+              <View style={styles.modalOverlay}>
+                <View style={styles.forgotCard}>
+                  <View style={styles.cardTopLine} />
+                  <Text style={styles.forgotTitle}>Reset Password</Text>
+                  <Text style={styles.forgotSub}>Enter your registered mobile number. We will send a secure reset link to your registered email.</Text>
+
+                  <Text style={styles.label}>MOBILE NUMBER</Text>
+                  <View style={styles.inputWrap}>
+                    <Text style={styles.inputIcon}>📱</Text>
+                    <TextInput
+                      style={[styles.input, { outlineStyle: 'none' } as any]}
+                      placeholder="Enter 10-digit mobile number"
+                      placeholderTextColor="rgba(255,255,255,0.2)"
+                      value={forgotPhone}
+                      onChangeText={(text) => setForgotPhone(text.replace(/\D/g, '').slice(0, 10))}
+                      maxLength={10}
+                      keyboardType="phone-pad"
+                    />
+                  </View>
+
+                  {!!forgotMessage && (
+                    <View style={styles.forgotMessageBox}>
+                      <Text style={styles.forgotMessageTxt}>✉️ {forgotMessage}</Text>
+                    </View>
+                  )}
+
+                  <View style={styles.forgotActions}>
+                    <TouchableOpacity
+                      style={styles.cancelBtn}
+                      onPress={() => setShowForgot(false)}
+                      disabled={forgotLoading}
+                    >
+                      <Text style={styles.cancelBtnTxt}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.resetBtn, forgotLoading && styles.loginBtnLoading]}
+                      onPress={handleForgotPassword}
+                      disabled={forgotLoading}
+                    >
+                      <Text style={styles.resetBtnTxt}>{forgotLoading ? 'Sending...' : 'Send Reset Link'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </Modal>
 
             {/* Login */}
             <Animated.View
@@ -545,6 +641,89 @@ const styles = StyleSheet.create({
     color: '#ff8080',
     fontSize: 12,
     fontWeight: '600',
+  },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(10,0,6,0.72)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+
+  forgotCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#24101C',
+    borderWidth: 1,
+    borderColor: 'rgba(201,168,76,0.35)',
+    borderRadius: 22,
+    padding: 24,
+  },
+
+  forgotTitle: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '900',
+    marginBottom: 6,
+  },
+
+  forgotSub: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 18,
+  },
+
+  forgotMessageBox: {
+    marginTop: 12,
+    backgroundColor: 'rgba(11,110,79,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(11,110,79,0.35)',
+    borderRadius: 10,
+    padding: 10,
+  },
+
+  forgotMessageTxt: {
+    color: '#8de0bd',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+
+  forgotActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 18,
+  },
+
+  cancelBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+
+  cancelBtnTxt: {
+    color: 'rgba(255,255,255,0.7)',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+
+  resetBtn: {
+    flex: 1.45,
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    backgroundColor: '#C9A84C',
+  },
+
+  resetBtnTxt: {
+    color: '#1A0310',
+    fontWeight: '900',
+    fontSize: 12,
   },
 
   forgotWrap: {
