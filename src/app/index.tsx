@@ -1,16 +1,7 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef } from 'react';
-import {
-  Animated,
-  Linking,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  useWindowDimensions,
-  View,
-} from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Linking, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
 
 const HELPLINES = [
@@ -21,30 +12,11 @@ const HELPLINES = [
 ];
 
 const QUICK = [
-  {
-    label: 'Emergency\nContacts',
-    icon: '👥',
-    route: '/contacts',
-    color: '#C9A84C',
-  },
-  {
-    label: 'Report\nIncident',
-    icon: '📋',
-    route: '/report',
-    color: '#4ade80',
-  },
-  {
-    label: 'AI Support',
-    icon: '🤖',
-    route: '/support',
-    color: '#a78bfa',
-  },
-  {
-    label: 'Safety\nInformation',
-    icon: '🛡️',
-    route: '/safety-info',
-    color: '#60a5fa',
-  },
+  { label: 'Emergency\nContacts', icon: '👥', route: '/contacts', color: '#C9A84C' },
+  { label: 'Report\nIncident', icon: '📋', route: '/report', color: '#4ade80' },
+  { label: 'AI Support', icon: '🤖', route: '/support', color: '#a78bfa' },
+  { label: 'Alert\nMode', icon: '🚨', route: '/alert', color: '#f87171' },
+  { label: 'Safety\nInformation', icon: '🛡️', route: '/safety-info', color: '#60a5fa' },
 ];
 
 const getInitials = (name: string) =>
@@ -68,7 +40,29 @@ export default function HomeScreen() {
     uid?: string;
   }>();
 
-  const fullName = String(params.fullName ?? '').trim() || 'User';
+  const [sessionUser, setSessionUser] = useState({ fullName: '', phone: '', email: '', uid: '' });
+
+  useEffect(() => {
+    let active = true;
+    AsyncStorage.getItem('wsUser').then((raw) => {
+      if (!active || !raw) return;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed) setSessionUser({
+          fullName: String(parsed.fullName ?? ''),
+          phone: String(parsed.phone ?? ''),
+          email: String(parsed.email ?? ''),
+          uid: String(parsed.uid ?? ''),
+        });
+      } catch {}
+    });
+    return () => { active = false; };
+  }, []);
+
+  const fullName = String(params.fullName ?? '').trim() || sessionUser.fullName || 'User';
+  const phone = String(params.phone ?? '').trim() || sessionUser.phone;
+  const email = String(params.email ?? '').trim() || sessionUser.email;
+  const uid = String(params.uid ?? '').trim() || sessionUser.uid;
   const initials = getInitials(fullName);
   const pulseOuter = useRef(new Animated.Value(1)).current;
   const pulseMid = useRef(new Animated.Value(1)).current;
@@ -111,7 +105,6 @@ export default function HomeScreen() {
     <View style={styles.container}>
       <ScreenBackground opacity={0.18} mobileOpacity={0.1} desktopWidth="58%" />
       <StatusBar barStyle="light-content" backgroundColor="#1A0310" />
-
       <View style={styles.glowTL} />
       <View style={styles.glowBR} />
       <View style={styles.glowMid} />
@@ -122,7 +115,6 @@ export default function HomeScreen() {
           <View style={styles.logoBox}>
             <Text style={styles.logoTxt}>WS</Text>
           </View>
-
           <View>
             <Text style={styles.appName}>WS App</Text>
             <Text style={styles.appSub}>Women Safety</Text>
@@ -133,7 +125,6 @@ export default function HomeScreen() {
           <TouchableOpacity
             style={styles.pillBtn}
             onPress={() => Linking.openURL('tel:1091')}
-            activeOpacity={0.8}
           >
             <Text style={styles.pillTxt}>📞 1091</Text>
           </TouchableOpacity>
@@ -145,13 +136,12 @@ export default function HomeScreen() {
                 pathname: '/profile',
                 params: {
                   fullName,
-                  phone: String(params.phone ?? ''),
-                  email: String(params.email ?? ''),
-                  uid: String(params.uid ?? ''),
+                  phone,
+                  email,
+                  uid,
                 },
               } as any)
             }
-            activeOpacity={0.8}
           >
             <Text style={styles.avatarTxt}>{initials}</Text>
           </TouchableOpacity>
@@ -170,7 +160,6 @@ export default function HomeScreen() {
             key={n.l}
             style={[styles.navItem, idx === 0 && styles.navItemActive]}
             onPress={() => router.push(n.r as any)}
-            activeOpacity={0.75}
           >
             <Text style={styles.navIco}>{n.i}</Text>
             <Text style={[styles.navLbl, idx === 0 && styles.navLblActive]}>
@@ -191,11 +180,9 @@ export default function HomeScreen() {
         <View style={styles.hero}>
           <View style={styles.heroTopLine} />
           <Text style={styles.heroEye}>✦ ALWAYS PROTECTED ✦</Text>
-
           <Text style={styles.heroTitle}>
             Your Safety is{'\n'}Our Priority
           </Text>
-
           <Text style={styles.heroSub}>
             Real-time alerts • AI Support • Emergency SOS
           </Text>
@@ -205,16 +192,12 @@ export default function HomeScreen() {
               <Text style={styles.statNum}>24/7</Text>
               <Text style={styles.statLbl}>Active</Text>
             </View>
-
             <View style={styles.statDiv} />
-
             <View style={styles.stat}>
               <Text style={styles.statNum}>100%</Text>
               <Text style={styles.statLbl}>Private</Text>
             </View>
-
             <View style={styles.statDiv} />
-
             <View style={styles.stat}>
               <Text style={styles.statNum}>FREE</Text>
               <Text style={styles.statLbl}>Forever</Text>
@@ -242,7 +225,6 @@ export default function HomeScreen() {
             <View style={styles.userAv}>
               <Text style={styles.userAvTxt}>{initials}</Text>
             </View>
-
             <View>
               <Text style={styles.userGreet}>Good day,</Text>
               <Text style={styles.userName}>{fullName} 👋</Text>
@@ -282,9 +264,7 @@ export default function HomeScreen() {
             </Animated.View>
           </TouchableOpacity>
 
-          <Text style={styles.sosHint}>
-            Tap to activate emergency alert
-          </Text>
+          <Text style={styles.sosHint}>Tap to activate emergency alert</Text>
         </View>
 
         {/* QUICK ACCESS */}
@@ -357,7 +337,6 @@ export default function HomeScreen() {
                 },
               ]}
               onPress={() => Linking.openURL(`tel:${h.number}`)}
-              activeOpacity={0.8}
             >
               <Text style={[styles.callTxt, { color: h.color }]}>Call</Text>
             </TouchableOpacity>

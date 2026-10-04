@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
@@ -91,6 +92,15 @@ export default function LoginScreen() {
       if (!response.ok || !result?.success) {
         throw new Error(result?.message || 'Unable to sign in.');
       }
+
+      const sessionUser = {
+        uid: String(result.user?.uid ?? ''),
+        fullName: String(result.user?.fullName ?? ''),
+        phone: String(result.user?.phone ?? normalizedPhone),
+        email: String(result.user?.email ?? ''),
+      };
+      await AsyncStorage.setItem('wsUser', JSON.stringify(sessionUser));
+      if (result.token) await AsyncStorage.setItem('wsToken', String(result.token));
 
       Animated.timing(progressAnim, {
         toValue: 1,

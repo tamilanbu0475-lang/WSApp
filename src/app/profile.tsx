@@ -1,9 +1,9 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
-  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -27,101 +27,55 @@ export default function ProfileScreen() {
     uid?: string;
   }>();
 
-  const getStorage = () => {
-    try {
-      return typeof globalThis !== 'undefined'
-        ? (globalThis as any).localStorage
-        : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const getStoredUser = () => {
-    try {
-      const storage = getStorage();
-      const candidates = ['wsUser', 'user', 'userData', 'wsappUser'];
-
-      for (const key of candidates) {
-        const raw = storage?.getItem?.(key);
-        if (!raw) continue;
-
-        try {
-          const parsed = JSON.parse(raw);
-          if (parsed) return parsed;
-        } catch {
-          // Ignore malformed storage entries and continue to the next key.
-        }
-      }
-    } catch {
-      // Storage may not be available on every native runtime.
-    }
-
-    return null;
-  };
-
-  const getStoredToken = () => {
-    try {
-      const storage = getStorage();
-      const keys = ['wsToken', 'token', 'idToken', 'wsAuthToken'];
-
-      for (const key of keys) {
-        const value = storage?.getItem?.(key);
-        if (value) return String(value);
-      }
-    } catch {
-      // Ignore storage errors.
-    }
-
-    return '';
-  };
-
-  const storedUser = getStoredUser() || {};
-  const initialFullName =
-    String(params.fullName ?? '').trim() ||
-    String(storedUser.fullName ?? storedUser.name ?? '').trim() ||
-    'User';
-  const initialPhone =
-    String(params.phone ?? '').trim() ||
-    String(storedUser.phone ?? '').trim();
-  const initialGmail =
-    String(params.email ?? '').trim().toLowerCase() ||
-    String(storedUser.email ?? '').trim().toLowerCase();
-  const profileUid =
-    String(params.uid ?? '').trim() ||
-    String(storedUser.uid ?? storedUser.id ?? '').trim();
-
   const [isEditing, setIsEditing] = useState(false);
-  const [fullName, setFullName] = useState(initialFullName);
-  const [phone, setPhone] = useState(initialPhone);
-  const [gmail, setGmail] = useState(initialGmail);
+  const [fullName, setFullName] = useState(String(params.fullName ?? '').trim() || 'User');
+  const [phone, setPhone] = useState(String(params.phone ?? '').trim());
+  const [gmail, setGmail] = useState(String(params.email ?? '').trim().toLowerCase());
+  const [profileUid, setProfileUid] = useState(String(params.uid ?? '').trim());
   const [contactCount, setContactCount] = useState(0);
+  const [sosCount, setSosCount] = useState(0);
+  const [reportCount, setReportCount] = useState(0);
 
-  const loadContactCount = () => {
-    if (!profileUid) {
-      setContactCount(0);
-      return;
-    }
-
-    try {
-      const raw = getStorage()?.getItem?.(
-        `wsapp_emergency_contacts_${profileUid.toLowerCase()}`
-      );
-
-      if (!raw) {
-        setContactCount(0);
-        return;
-      }
-
-      const parsed = JSON.parse(raw);
-      setContactCount(Array.isArray(parsed) ? parsed.length : 0);
-    } catch {
-      setContactCount(0);
-    }
-  };
+  const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
 
   useEffect(() => {
-    loadContactCount();
+    let active = true;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('wsUser');
+        if (!raw || !active) return;
+        const u = JSON.parse(raw) || {};
+        if (!String(params.fullName ?? '').trim()) setFullName(String(u.fullName ?? u.name ?? 'User'));
+        if (!String(params.phone ?? '').trim()) setPhone(String(u.phone ?? ''));
+        if (!String(params.email ?? '').trim()) setGmail(String(u.email ?? '').toLowerCase());
+        setProfileUid(String(params.uid ?? '').trim() || String(u.uid ?? u.id ?? ''));
+      } catch {}
+    })();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!profileUid) return;
+    (async () => {
+      try {
+        const token = await AsyncStorage.getItem('wsToken');
+        if (token) {
+          const res = await fetch(`${BACKEND_URL}/api/user/stats`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const data = await res.json().catch(() => null);
+          if (res.ok && data?.success) {
+            setSosCount(Number(data.sosCount || 0));
+            setReportCount(Number(data.reportCount || 0));
+          }
+        }
+      } catch {}
+      try {
+        const raw = await AsyncStorage.getItem(`wsapp_emergency_contacts_${profileUid.toLowerCase()}`);
+        const parsed = raw ? JSON.parse(raw) : [];
+        setContactCount(Array.isArray(parsed) ? parsed.length : 0);
+      } catch { setContactCount(0); }
+    })();
   }, [profileUid]);
 
   const saveAnim = useRef(
@@ -146,40 +100,6 @@ export default function ProfileScreen() {
   };
 
   const handleLogout = () => {
-    const clearSessionAndGoLogin = () => {
-      const storage = getStorage();
-      const sessionKeys = [
-        'wsToken',
-        'token',
-        'idToken',
-        'wsAuthToken',
-        'wsUser',
-        'user',
-        'userData',
-        'wsappUser',
-      ];
-
-      for (const key of sessionKeys) {
-        try {
-          storage?.removeItem?.(key);
-        } catch {
-          // Ignore storage cleanup errors.
-        }
-      }
-
-      router.replace('/login' as any);
-    };
-
-    if (Platform.OS === 'web') {
-      const confirmed = window.confirm(
-        'Logout\n\nAre you sure you want to logout?'
-      );
-      if (confirmed) {
-        clearSessionAndGoLogin();
-      }
-      return;
-    }
-
     Alert.alert('Logout', 'Are you sure?', [
       {
         text: 'Cancel',
@@ -188,130 +108,10 @@ export default function ProfileScreen() {
       {
         text: 'Logout',
         style: 'destructive',
-        onPress: clearSessionAndGoLogin,
+        onPress: () =>
+          router.replace('/login' as any),
       },
     ]);
-  };
-
-  const performDeleteAccount = async () => {
-    const token = getStoredToken();
-
-    if (!token) {
-      if (Platform.OS === 'web') {
-        window.alert('Please sign in again before deleting your account.');
-      } else {
-        Alert.alert(
-          'Session Missing',
-          'Please sign in again before deleting your account.'
-        );
-      }
-      return;
-    }
-
-    try {
-      const backendUrl =
-        process.env.EXPO_PUBLIC_BACKEND_URL ||
-        'https://wsapp-9w4r.onrender.com';
-
-      const response = await fetch(
-        `${backendUrl}/api/account/delete`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      const result = await response.json().catch(() => null);
-
-      if (!response.ok || !result?.success) {
-        throw new Error(
-          result?.message || 'Unable to delete your account.'
-        );
-      }
-
-      const storage = getStorage();
-      const sessionKeys = [
-        'wsToken',
-        'token',
-        'idToken',
-        'wsAuthToken',
-        'wsUser',
-        'user',
-        'userData',
-        'wsappUser',
-      ];
-
-      for (const key of sessionKeys) {
-        try {
-          storage?.removeItem?.(key);
-        } catch {
-          // Ignore storage cleanup errors.
-        }
-      }
-
-      if (Platform.OS === 'web') {
-        window.alert(
-          'Account deleted successfully. You can register again later using the same email and phone as a new account.'
-        );
-        router.replace('/login' as any);
-      } else {
-        Alert.alert(
-          'Account Deleted',
-          'Your account has been deleted. You can register again later using the same email and phone as a new account.',
-          [
-            {
-              text: 'OK',
-              onPress: () => router.replace('/login' as any),
-            },
-          ]
-        );
-      }
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'Unable to delete your account.';
-
-      if (Platform.OS === 'web') {
-        window.alert(`Account Deletion Failed\n\n${message}`);
-      } else {
-        Alert.alert('Account Deletion Failed', message);
-      }
-    }
-  };
-
-  const handleDeleteAccount = () => {
-    const message =
-      'This permanently deletes your account and profile. You can register again later using the same email and phone as a new account.';
-
-    if (Platform.OS === 'web') {
-      const confirmed = window.confirm(`Delete Account\n\n${message}`);
-      if (confirmed) {
-        void performDeleteAccount();
-      }
-      return;
-    }
-
-    Alert.alert(
-      'Delete Account',
-      message,
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Delete Account',
-          style: 'destructive',
-          onPress: () => {
-            void performDeleteAccount();
-          },
-        },
-      ]
-    );
   };
 
   const getInitials = (name: string) =>
@@ -455,8 +255,8 @@ export default function ProfileScreen() {
             <View style={styles.statsRow}>
               {[
                 [String(contactCount), 'Contacts'],
-                ['0', 'SOS Drills'],
-                ['0', 'Reports'],
+                [String(sosCount), 'SOS Drills'],
+                [String(reportCount), 'Reports'],
               ].map(([num, label], index) => (
                 <View
                   key={label}
@@ -706,33 +506,6 @@ export default function ProfileScreen() {
                 Your data is encrypted and stored securely.
                 We never share your personal information.
               </Text>
-            </View>
-          )}
-
-          {/* ACCOUNT SECURITY */}
-          {!isEditing && (
-            <View
-              style={[
-                styles.dangerCard,
-                !isMobile && styles.cardDesktop,
-              ]}
-            >
-              <Text style={styles.dangerIcon}>⚠️</Text>
-
-              <View style={styles.dangerInfo}>
-                <Text style={styles.dangerTitle}>Delete Account</Text>
-                <Text style={styles.dangerSub}>
-                  Permanently delete this account. You can register again later as a new account.
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={styles.deleteBtn}
-                onPress={handleDeleteAccount}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.deleteBtnTxt}>Delete Account</Text>
-              </TouchableOpacity>
             </View>
           )}
 
@@ -1256,55 +1029,6 @@ const styles = StyleSheet.create({
       'rgba(74,222,128,0.6)',
     fontSize: 12,
     lineHeight: 18,
-  },
-
-  dangerCard: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: 'rgba(248,113,113,0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(248,113,113,0.20)',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-  },
-
-  dangerIcon: {
-    fontSize: 19,
-  },
-
-  dangerInfo: {
-    flex: 1,
-  },
-
-  dangerTitle: {
-    color: 'rgba(255,255,255,0.88)',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-
-  dangerSub: {
-    color: 'rgba(255,255,255,0.38)',
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 3,
-  },
-
-  deleteBtn: {
-    borderWidth: 1,
-    borderColor: 'rgba(248,113,113,0.32)',
-    backgroundColor: 'rgba(248,113,113,0.10)',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-  },
-
-  deleteBtnTxt: {
-    color: '#f87171',
-    fontSize: 11,
-    fontWeight: '800',
   },
 
   logoutBtn: {

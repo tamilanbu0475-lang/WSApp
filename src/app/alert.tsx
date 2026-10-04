@@ -1,21 +1,21 @@
-import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   BackHandler,
   Linking,
-  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  useWindowDimensions, Vibration,
+  useWindowDimensions, Vibration, Platform,
   View,
 } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
+import * as Location from 'expo-location';
 
 
 export default function AlertScreen() {
@@ -52,30 +52,16 @@ export default function AlertScreen() {
   const API_URL =
     process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
 
-  const getStoredUser = () => {
+  const getStoredUser = async () => {
     try {
-      const storage: any = typeof globalThis !== 'undefined' ? (globalThis as any).localStorage : null;
-      const candidates = ['wsUser', 'user', 'userData', 'wsappUser'];
-      for (const key of candidates) {
-        const raw = storage?.getItem?.(key);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed) return parsed;
-        }
-      }
-    } catch {}
-    return null;
+      const raw = await AsyncStorage.getItem('wsUser');
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
   };
 
-  const getStoredToken = () => {
+  const getStoredToken = async () => {
     try {
-      const storage: any = typeof globalThis !== 'undefined' ? (globalThis as any).localStorage : null;
-      const keys = ['wsToken', 'token', 'idToken', 'wsAuthToken'];
-      for (const key of keys) {
-        const value = storage?.getItem?.(key);
-        if (value) return value;
-      }
-      return null;
+      return await AsyncStorage.getItem('wsToken');
     } catch { return null; }
   };
 
@@ -197,8 +183,8 @@ export default function AlertScreen() {
     if (createdRef.current) return;
     createdRef.current = true;
     try {
-      const user = getStoredUser() || {};
-      const token = getStoredToken();
+      const user = (await getStoredUser()) || {};
+      const token = await getStoredToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers.Authorization = `Bearer ${token}`;
       const res = await fetch(`${API_URL}/api/sos`, {

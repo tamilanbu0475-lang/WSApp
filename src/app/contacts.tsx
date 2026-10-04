@@ -1,5 +1,6 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -34,42 +35,41 @@ export default function ContactsScreen() {
 
   // Contacts are stored separately for each signed-in user.
   // No demo/default contacts are preloaded.
-  const getStorage = () => {
+  const getCurrentUserKey = async () => {
     try {
-      return typeof globalThis !== 'undefined'
-        ? (globalThis as any).localStorage
-        : null;
+      const raw = await AsyncStorage.getItem('wsUser');
+      if (!raw) return 'guest';
+      const parsed = JSON.parse(raw);
+      const id = parsed?.uid || parsed?.id || parsed?.email || parsed?.phone;
+      return id ? String(id).trim().toLowerCase() : 'guest';
     } catch {
-      return null;
+      return 'guest';
     }
   };
 
-  const getCurrentUserKey = () => {
-    try {
-      const storage = getStorage();
-      const candidates = ['wsUser', 'user', 'userData', 'wsappUser'];
-
-      for (const key of candidates) {
-        const raw = storage?.getItem?.(key);
-        if (!raw) continue;
-
-        try {
-          const parsed = JSON.parse(raw);
-          const id = parsed?.uid || parsed?.id || parsed?.email || parsed?.phone;
-          if (id) return String(id).trim().toLowerCase();
-        } catch {}
-      }
-    } catch {}
-
-    return 'guest';
-  };
-
-  const storageKey = `wsapp_emergency_contacts_${getCurrentUserKey()}`;
-
+  const [storageKey, setStorageKey] = useState('wsapp_emergency_contacts_guest');
+  const [contacts, setContacts] = useState<Contact[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [newName,  setNewName]  = useState('');
+  const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
-  const [newRel,   setNewRel]   = useState('');
+  const [newRel, setNewRel] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const key = `wsapp_emergency_contacts_${await getCurrentUserKey()}`;
+      if (!active) return;
+      setStorageKey(key);
+      try {
+        const raw = await AsyncStorage.getItem(key);
+        const parsed = raw ? JSON.parse(raw) : [];
+        if (active) setContacts(Array.isArray(parsed) ? parsed : []);
+      } catch {
+        if (active) setContacts([]);
+      }
+    })();
+    return () => { active = false; };
+  }, []);
 
   // ✅ Fixed useRef
   const phoneRef = useRef<TextInput>(null);
@@ -102,14 +102,12 @@ export default function ContactsScreen() {
     }
   };
 
-  const saveContacts = (next: Contact[]) => {
+  const saveContacts = async (next: Contact[]) => {
     setContacts(next);
     try {
-      getStorage()?.setItem?.(storageKey, JSON.stringify(next));
+      await AsyncStorage.setItem(storageKey, JSON.stringify(next));
     } catch {}
   };
-
-  const [contacts, setContacts] = useState<Contact[]>(readSavedContacts);
 
   const setPrimary = (id: number) => {
     saveContacts(

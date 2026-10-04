@@ -1197,6 +1197,21 @@ def resolve_user_sos(doc_id):
         ), 500
 
 
+@app.get("/api/user/stats")
+def user_stats():
+    try:
+        decoded, error_response = require_user_from_token()
+        if error_response is not None:
+            return error_response
+
+        uid = str(decoded.get("uid") or "").strip()
+        sos_count = sum(1 for doc in db.collection("sosAlerts").where("uid", "==", uid).stream())
+        report_count = sum(1 for doc in db.collection("complaints").where("uid", "==", uid).stream())
+        return jsonify({"success": True, "sosCount": sos_count, "reportCount": report_count})
+    except Exception as e:
+        return jsonify({"success": False, "message": "Unable to load user statistics.", "error": str(e)}), 500
+
+
 @app.get("/api/police/nearest")
 def nearest_police():
     """Find the nearest mapped police station using free public OSM/Overpass services."""
