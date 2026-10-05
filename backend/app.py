@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 
 import requests
 import re
+import math
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -648,36 +649,6 @@ def register():
         ), 500
 
 
-def find_user_by_phone(phone):
-    """Find a WS App user even if older records stored +91/spaces/dashes."""
-    digits = re.sub(r"\D", "", str(phone or ""))
-    if len(digits) > 10 and digits.endswith(digits[-10:]):
-        digits = digits[-10:]
-
-    # Fast path for the current normalized format.
-    try:
-        docs = (
-            db.collection("users")
-            .where("phone", "==", digits)
-            .limit(1)
-            .stream()
-        )
-        doc = next(docs, None)
-        if doc is not None:
-            return doc
-    except Exception:
-        pass
-
-    # Compatibility path for older accounts stored as +91XXXXXXXXXX,
-    # 0XXXXXXXXX, or formatted strings.
-    for doc in db.collection("users").stream():
-        data = doc.to_dict() or {}
-        stored = re.sub(r"\D", "", str(data.get("phone", "")))
-        if len(stored) >= 10 and stored[-10:] == digits[-10:]:
-            return doc
-    return None
-
-
 @app.post("/api/login")
 def login():
     try:
@@ -712,7 +683,14 @@ def login():
                 }
             ), 500
 
-        doc = find_user_by_phone(phone)
+        docs = (
+            db.collection("users")
+            .where("phone", "==", phone)
+            .limit(1)
+            .stream()
+        )
+
+        doc = next(docs, None)
 
         if doc is None:
             return jsonify(
@@ -818,81 +796,6 @@ def login():
                 "error": str(e),
             }
         ), 500
-
-
-@app.post("/api/forgot-password")
-def forgot_password():
-    """Send a Firebase password-reset link to the email registered for a phone number."""
-    try:
-        data = request.get_json(silent=True) or {}
-        phone = re.sub(r"\D", "", str(data.get("phone", "")))
-        if len(phone) > 10:
-            phone = phone[-10:]
-
-        if not re.fullmatch(r"\d{10}", phone):
-            return jsonify({
-                "success": False,
-                "message": "Enter a valid 10-digit mobile number.",
-            }), 400
-
-        doc = find_user_by_phone(phone)
-        generic_message = (
-            "If an account is registered with this number, a password-reset email "
-            "has been sent to its registered email address."
-        )
-
-        if doc is None:
-            return jsonify({"success": True, "message": generic_message}), 200
-
-        user_data = doc.to_dict() or {}
-        email = str(user_data.get("email", "")).strip().lower()
-        if not email:
-            return jsonify({"success": True, "message": generic_message}), 200
-
-        reset_link = auth.generate_password_reset_link(email)
-        safe_name = str(user_data.get("fullName", "WS App User")).strip() or "WS App User"
-
-        html = f"""
-        <div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:28px;background:#fdf8f9;color:#24101c;border-radius:18px;">
-          <h2 style="color:#5C0A2D;margin-top:0;">WS App — Reset Your Password</h2>
-          <p>Hello {safe_name},</p>
-          <p>We received a request to reset your WS App password.</p>
-          <p style="margin:24px 0;">
-            <a href="{reset_link}" style="display:inline-block;padding:13px 20px;background:#C9A84C;color:#1A0310;text-decoration:none;border-radius:10px;font-weight:800;">Reset Password</a>
-          </p>
-          <p style="font-size:12px;color:#6f6269;line-height:1.6;">If you did not request this, you can ignore this email.</p>
-          <p>Stay safe,<br><strong>WS App Team</strong></p>
-        </div>
-        """
-        text_content = (
-            "WS App — Reset Your Password\n\n"
-            f"Hello {safe_name},\n\n"
-            "We received a request to reset your WS App password.\n\n"
-            f"Reset your password here:\n{reset_link}\n\n"
-            "If you did not request this, you can ignore this email.\n\n"
-            "WS App Team"
-        )
-
-        if not send_brevo_email(
-            email,
-            safe_name,
-            "WS App — Reset Your Password",
-            text_content,
-            html,
-        ):
-            return jsonify({
-                "success": False,
-                "message": "Password reset email could not be sent right now. Please try again later.",
-            }), 503
-
-        return jsonify({"success": True, "message": generic_message}), 200
-
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to process password recovery right now.",
-            "error": str(e),
-        }), 500
 
 
 # ---------------- USER ACCOUNT SOFT-DELETE ----------------
@@ -1027,7 +930,7 @@ def account_status():
 
 @app.get("/api/user/stats")
 def user_stats():
-    """Return authenticated user's SOS and complaint counts for the Profile screen."""
+    """Return robust per-user SOS/report counts for the Profile screen."""
     try:
         decoded, error_response = require_user_from_token()
         if error_response is not None:
@@ -1037,8 +940,48 @@ def user_stats():
         if not uid:
             return jsonify({"success": False, "message": "Invalid user session."}), 401
 
-        sos_count = sum(1 for _ in db.collection("sosAlerts").where("uid", "==", uid).stream())
-        report_count = sum(1 for _ in db.collection("complaints").where("uid", "==", uid).stream())
+        # Load the signed-in profile so older records can still be matched when
+        # an earlier SOS/report was saved with phone/email instead of UID.
+        user_snap = db.collection("users").document(uid).get()
+        user_data = user_snap.to_dict() or {} if user_snap.exists else {}
+
+        def norm_phone(value):
+            digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+            if digits.startswith("0") and len(digits) == 11:
+                digits = digits[1:]
+            if digits.startswith("91") and len(digits) == 12:
+                return digits[2:]
+            return digits[-10:] if len(digits) >= 10 else digits
+
+        user_phone = norm_phone(user_data.get("phone") or decoded.get("phone_number"))
+        user_email = str(user_data.get("email") or decoded.get("email") or "").strip().lower()
+
+        def belongs_to_user(record):
+            rid = str(
+                record.get("uid")
+                or record.get("userId")
+                or record.get("userUid")
+                or ""
+            ).strip()
+            if rid and rid == uid:
+                return True
+
+            record_phone = norm_phone(record.get("phone") or record.get("mobile"))
+            if user_phone and record_phone and record_phone == user_phone:
+                return True
+
+            record_email = str(record.get("email") or "").strip().lower()
+            return bool(user_email and record_email and record_email == user_email)
+
+        sos_count = 0
+        for doc in db.collection("sosAlerts").stream():
+            if belongs_to_user(doc.to_dict() or {}):
+                sos_count += 1
+
+        report_count = 0
+        for doc in db.collection("complaints").stream():
+            if belongs_to_user(doc.to_dict() or {}):
+                report_count += 1
 
         return jsonify({
             "success": True,
@@ -1408,7 +1351,7 @@ def notify_sos_contacts():
 
 @app.get("/api/police/nearest")
 def nearest_police():
-    """Find the nearest mapped police station using free public OSM/Overpass services."""
+    """Find the nearest police station using multiple free OpenStreetMap services."""
     try:
         lat = float(request.args.get("lat"))
         lon = float(request.args.get("lon"))
@@ -1428,19 +1371,26 @@ def nearest_police():
             }
         ), 400
 
-    # Search two common OSM police tags within 10 km.
+    # Search a wider 25 km radius because small-town/rural OSM coverage
+    # may place the mapped police station several kilometres away.
+    radius_m = 25000
     query = (
-        f'[out:json][timeout:6];'
-        f'('
-        f'nwr["amenity"="police"](around:10000,{lat},{lon});'
-        f'nwr["police"](around:10000,{lat},{lon});'
-        f');'
-        f'out center tags;'
+        f"[out:json][timeout:15];"
+        f"("
+        f'nwr["amenity"="police"](around:{radius_m},{lat},{lon});'
+        f'nwr["police"](around:{radius_m},{lat},{lon});'
+        f'nwr["office"="government"]["government"="police"](around:{radius_m},{lat},{lon});'
+        f");"
+        f"out center tags;"
     )
 
+    # Public Overpass servers. We try them one by one so a slow/unavailable
+    # provider does not prevent a later provider from returning a result.
     endpoints = [
         "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
         "https://overpass.private.coffee/api/interpreter",
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     ]
 
     def make_candidate(item):
@@ -1457,13 +1407,23 @@ def nearest_police():
         except (TypeError, ValueError):
             return None
 
+        if not (-90 <= p_lat <= 90 and -180 <= p_lon <= 180):
+            return None
+
         distance = haversine_km(lat, lon, p_lat, p_lon)
+
+        # Never return an out-of-range result even if an upstream provider
+        # ignores the requested radius.
+        if distance > 25:
+            return None
+
         tags = item.get("tags") or {}
 
         name = (
             tags.get("name")
             or tags.get("name:en")
             or tags.get("official_name")
+            or tags.get("operator")
             or "Police Station"
         )
 
@@ -1472,16 +1432,25 @@ def nearest_police():
             for key in (
                 "addr:housenumber",
                 "addr:street",
+                "addr:place",
                 "addr:suburb",
+                "addr:village",
+                "addr:town",
                 "addr:city",
                 "addr:district",
+                "addr:state",
             )
             if tags.get(key)
         ]
 
+        if address_parts:
+            address = ", ".join(dict.fromkeys(str(x).strip() for x in address_parts))
+        else:
+            address = "Nearby police station"
+
         return {
-            "name": name,
-            "address": ", ".join(address_parts) or "Nearby police station",
+            "name": str(name).strip() or "Police Station",
+            "address": address,
             "latitude": p_lat,
             "longitude": p_lon,
             "distanceKm": round(distance, 2),
@@ -1492,14 +1461,16 @@ def nearest_police():
         }
 
     def query_overpass(endpoint):
-        response = requests.post(
+        # GET + data parameter works reliably with the public Overpass
+        # instances and also keeps the request easy to retry.
+        response = requests.get(
             endpoint,
-            data=query,
+            params={"data": query},
             headers={
                 "User-Agent": "WSApp/1.0 (+https://github.com/tamilanbu0475-lang/WSApp)",
                 "Accept": "application/json",
             },
-            timeout=7,
+            timeout=12,
         )
         response.raise_for_status()
         body = response.json()
@@ -1507,105 +1478,108 @@ def nearest_police():
 
     best = None
 
-    # Query two public endpoints in parallel so one slow server does not block
-    # the other one from starting.
-    try:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {
-                executor.submit(query_overpass, endpoint): endpoint
-                for endpoint in endpoints
-            }
-
-            for future in as_completed(futures):
-                try:
-                    elements = future.result()
-                except Exception:
-                    continue
-
-                for item in elements:
-                    candidate = make_candidate(item)
-                    if candidate is None:
-                        continue
-
-                    if best is None or candidate["distanceKm"] < best["distanceKm"]:
-                        best = candidate
-
-    except Exception:
-        best = None
-
-    # Third public endpoint as a fallback if the first two fail.
-    if best is None:
-        fallback_endpoint = (
-            "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
-        )
-
+    # Use the first successful provider that gives us at least one mapped
+    # police location. Each provider is independently retried.
+    for endpoint in endpoints:
         try:
-            elements = query_overpass(fallback_endpoint)
-
-            for item in elements:
-                candidate = make_candidate(item)
-                if candidate is None:
-                    continue
-
-                if best is None or candidate["distanceKm"] < best["distanceKm"]:
-                    best = candidate
+            elements = query_overpass(endpoint)
         except Exception:
-            pass
+            continue
 
-    if best is not None:
-        return jsonify(
-            {
-                "success": True,
-                "police": best,
-            }
-        ), 200
+        for item in elements:
+            candidate = make_candidate(item)
+            if candidate is None:
+                continue
 
-    # Nominatim fallback: use OpenStreetMap's public geocoder and rank results by Haversine distance.
+            if best is None or candidate["distanceKm"] < best["distanceKm"]:
+                best = candidate
+
+        if best is not None:
+            return jsonify(
+                {
+                    "success": True,
+                    "police": best,
+                    "source": "overpass",
+                }
+            ), 200
+
+    # Nominatim fallback with a real 25 km bounding box. The old implementation
+    # only supplied lat/lon, which could return weakly related search results.
     try:
+        delta_lat = 25 / 111.0
+        cos_lat = max(0.2, abs(math.cos(math.radians(lat))))
+        delta_lon = 25 / (111.0 * cos_lat)
+
         response = requests.get(
             "https://nominatim.openstreetmap.org/search",
             params={
-                "q": "police station",
+                "q": "police",
                 "format": "jsonv2",
-                "limit": 10,
+                "limit": 50,
                 "addressdetails": 1,
-                "lat": lat,
-                "lon": lon,
+                "viewbox": (
+                    f"{lon - delta_lon},{lat + delta_lat},"
+                    f"{lon + delta_lon},{lat - delta_lat}"
+                ),
+                "bounded": 1,
+                "dedupe": 1,
+                "accept-language": "en",
             },
-            headers={"User-Agent": "WSApp/1.0 (+https://github.com/tamilanbu0475-lang/WSApp)"},
-            timeout=8,
+            headers={
+                "User-Agent": "WSApp/1.0 (+https://github.com/tamilanbu0475-lang/WSApp)",
+                "Accept": "application/json",
+            },
+            timeout=12,
         )
+
         if response.ok:
-            best = None
             for item in response.json() or []:
                 try:
                     p_lat = float(item.get("lat"))
                     p_lon = float(item.get("lon"))
                 except (TypeError, ValueError):
                     continue
+
                 distance = haversine_km(lat, lon, p_lat, p_lon)
+                if distance > 25:
+                    continue
+
+                address = item.get("display_name") or "Nearby police station"
+                display_name = str(address).split(",")[0].strip() or "Police Station"
+
                 candidate = {
-                    "name": item.get("display_name", "Police Station").split(",")[0],
-                    "address": item.get("display_name", "Nearby police station"),
+                    "name": display_name,
+                    "address": address,
                     "latitude": p_lat,
                     "longitude": p_lon,
                     "distanceKm": round(distance, 2),
-                    "mapsUrl": f"https://www.google.com/maps/search/?api=1&query={p_lat},{p_lon}",
+                    "mapsUrl": (
+                        "https://www.google.com/maps/search/"
+                        f"?api=1&query={p_lat},{p_lon}"
+                    ),
                 }
+
                 if best is None or candidate["distanceKm"] < best["distanceKm"]:
                     best = candidate
+
             if best is not None:
-                return jsonify({"success": True, "police": best, "source": "nominatim"}), 200
+                return jsonify(
+                    {
+                        "success": True,
+                        "police": best,
+                        "source": "nominatim",
+                    }
+                ), 200
+
     except Exception:
         pass
 
-    # Keep the SOS screen usable even when public map directories are unavailable.
+    # Final safe fallback. We do not invent a police-station name when public
+    # map data is temporarily unavailable; the user can still open Google Maps.
     return jsonify(
         {
             "success": False,
-            "message": "No nearby police station found right now.",
+            "message": "Nearby police station data is temporarily unavailable.",
             "mapsSearchUrl": (
                 "https://www.google.com/maps/search/"
                 f"?api=1&query=police+station+near+{lat},{lon}"
