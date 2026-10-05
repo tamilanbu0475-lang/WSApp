@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -447,3 +447,4 @@ const styles = StyleSheet.create({
     zIndex: 0,
   },
 });
+

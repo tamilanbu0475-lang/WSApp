@@ -1,43 +1,22 @@
+import * as Location from 'expo-location';
 import { router, useFocusEffect } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
   BackHandler,
   Linking,
+  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  useWindowDimensions, Vibration, Platform,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
-import * as Location from 'expo-location';
-
-const MSG91_MOBILE_WIDGET_ID = process.env.EXPO_PUBLIC_MSG91_WIDGET_ID || '';
-const MSG91_MOBILE_TOKEN_AUTH = process.env.EXPO_PUBLIC_MSG91_TOKEN_AUTH || '';
-const MSG91_WEB_WIDGET_ID = process.env.EXPO_PUBLIC_MSG91_WEB_WIDGET_ID || '';
-const MSG91_WEB_TOKEN_AUTH = process.env.EXPO_PUBLIC_MSG91_WEB_TOKEN_AUTH || '';
-
-type WebOtpApi = {
-  sendOtp: (identifier: string, success?: (data: any) => void, failure?: (error: any) => void) => void;
-  retryOtp: (channel: string | null, success?: (data: any) => void, failure?: (error: any) => void, reqId?: string) => void;
-  verifyOtp: (otp: string, success?: (data: any) => void, failure?: (error: any) => void, reqId?: string) => void;
-};
-
-declare global {
-  interface Window {
-    sendOtp?: WebOtpApi['sendOtp'];
-    retryOtp?: WebOtpApi['retryOtp'];
-    verifyOtp?: WebOtpApi['verifyOtp'];
-    initSendOTP?: (configuration: any) => void;
-  }
-}
-
 
 export default function AlertScreen() {
   const { width } = useWindowDimensions();
@@ -49,13 +28,14 @@ export default function AlertScreen() {
   const [location, setLocation] = useState({ latitude: null as number | null, longitude: null as number | null, accuracy: null as number | null, text: 'Getting your live location...' });
   const [police, setPolice] = useState({ name: 'Finding nearest police station...', address: 'Please wait...', distanceKm: null as number | null, mapsUrl: '' });
   const [sosSaved, setSosSaved] = useState(false);
+  const [smsStatus, setSmsStatus] = useState<'pending' | 'sent' | 'failed'>('pending');
+  const [smsMessage, setSmsMessage] = useState('Waiting for a precise GPS fix before alerting your emergency contacts...');
   const locationWatchRef = useRef<any>(null);
   const policeTimerRef = useRef<any>(null);
   const alertIdRef = useRef<string | null>(null);
   const createdRef = useRef(false);
   const contactsNotifiedRef = useRef(false);
-  const stopOtpSentRef = useRef(false);
-  const stopOtpReqIdRef = useRef('');
+  const MAX_GPS_ACCURACY_METERS = 200;
 
   const inputs    = [useRef<TextInput>(null), useRef<TextInput>(null), useRef<TextInput>(null), useRef<TextInput>(null)];
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -76,118 +56,112 @@ export default function AlertScreen() {
   const API_URL =
     process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
 
-  const getStoredUser = async () => {
+  const getStorageValue = async (keys: string[]) => {
     try {
-      const raw = await AsyncStorage.getItem('wsUser');
-      if (raw) return JSON.parse(raw);
+      if (typeof globalThis === 'undefined') return null;
+      const storage: any = (globalThis as any).localStorage;
+      for (const key of keys) {
+        const value = storage?.getItem?.(key);
+        if (value) return value;
+      }
     } catch {}
     return null;
   };
 
-  const getStoredToken = async () => {
+  const getStoredUser = async () => {
     try {
-      return await AsyncStorage.getItem('wsToken');
-    } catch { return null; }
-  };
-
-  const getContactsForUser = async (uid: string) => {
-    if (!uid) return [];
-    try {
-      const raw = await AsyncStorage.getItem(`wsapp_emergency_contacts_${uid.trim().toLowerCase()}`);
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.filter((c: any) => c?.phone) : [];
-    } catch { return []; }
-  };
-
-  const getWebIdentifier = (phone: string) => {
-    const digits = String(phone || '').replace(/\D/g, '');
-    if (digits.length === 10) return `91${digits}`;
-    return digits;
-  };
-
-  const loadWebOtpSdk = async () => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
-    if (!MSG91_WEB_WIDGET_ID || !MSG91_WEB_TOKEN_AUTH) return false;
-    if (window.sendOtp && window.verifyOtp && window.retryOtp) return true;
-    await new Promise<void>((resolve, reject) => {
-      const existing = document.getElementById('msg91-otp-sdk');
-      if (existing) {
-        const timer = window.setInterval(() => {
-          if (window.sendOtp && window.verifyOtp && window.retryOtp) {
-            window.clearInterval(timer); resolve();
-          }
-        }, 100);
-        window.setTimeout(() => { window.clearInterval(timer); reject(new Error('MSG91 OTP SDK unavailable')); }, 10000);
-        return;
-      }
-      const script = document.createElement('script');
-      script.id = 'msg91-otp-sdk';
-      script.src = 'https://verify.msg91.com/otp-provider.js';
-      script.async = true;
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error('Unable to load MSG91 OTP SDK'));
-      document.head.appendChild(script);
-    });
-    window.initSendOTP?.({
-      widgetId: MSG91_WEB_WIDGET_ID,
-      tokenAuth: MSG91_WEB_TOKEN_AUTH,
-      exposeMethods: true,
-      identifier: '',
-      success: (data: any) => data,
-      failure: (error: any) => error,
-    });
-    return !!(window.sendOtp && window.verifyOtp && window.retryOtp);
-  };
-
-  const sendStopOtp = async (phone: string) => {
-    if (stopOtpSentRef.current || !phone) return;
-    stopOtpSentRef.current = true;
-    try {
-      const identifier = getWebIdentifier(phone);
-      if (Platform.OS === 'web') {
-        const ready = await loadWebOtpSdk();
-        if (!ready || !window.sendOtp) throw new Error('MSG91 Web OTP is unavailable');
-        await new Promise<void>((resolve, reject) => {
-          window.sendOtp!(identifier, (data: any) => {
-            stopOtpReqIdRef.current = String(data?.reqId ?? data?.reqID ?? data?.requestId ?? '');
-            resolve();
-          }, (error: any) => reject(new Error(error?.message || 'Unable to send safety OTP')));
-        });
-        return;
-      }
-      if (!MSG91_MOBILE_WIDGET_ID || !MSG91_MOBILE_TOKEN_AUTH) throw new Error('MSG91 mobile OTP is not configured');
-      const mod = await import('@msg91comm/sendotp-react-native');
-      const OTPWidget = mod.OTPWidget;
-      await OTPWidget.initializeWidget(MSG91_MOBILE_WIDGET_ID, MSG91_MOBILE_TOKEN_AUTH);
-      const response = await OTPWidget.sendOTP({ identifier });
-      stopOtpReqIdRef.current = String(response?.reqId ?? response?.reqID ?? response?.requestId ?? '');
-      if (!stopOtpReqIdRef.current) throw new Error(response?.message || 'MSG91 did not return a request ID');
-    } catch (e) {
-      stopOtpSentRef.current = false;
-      console.warn('Stop Alert OTP send failed:', e);
+      const raw = await getStorageValue(['wsUser', 'user', 'userData', 'wsappUser']);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed || null;
+    } catch {
+      return null;
     }
   };
 
-  const notifyEmergencyContacts = async (user: any, latitude: number, longitude: number) => {
+  const getStoredToken = async () => {
+    try {
+      return await getStorageValue(['wsToken', 'token', 'idToken', 'wsAuthToken']);
+    } catch {
+      return null;
+    }
+  };
+
+  const getContactsForUser = async (user: any) => {
+    const rawKeys = [user?.uid, user?.id, user?.email, user?.phone]
+      .map((value: any) => String(value || '').trim().toLowerCase())
+      .filter(Boolean);
+    const keys = [...new Set(rawKeys)].map(value => `wsapp_emergency_contacts_${value}`);
+    if (!keys.length) return [];
+
+    try {
+      if (typeof globalThis === 'undefined') return [];
+      const storage: any = (globalThis as any).localStorage;
+      for (const key of keys) {
+        const raw = storage?.getItem?.(key);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const valid = parsed.filter((c: any) => c?.phone);
+          if (valid.length) return valid;
+        }
+      }
+    } catch {}
+
+    return [];
+  };
+
+  // Safety OTP is generated by the backend and sent to the saved emergency contacts.
+  // The SOS user does not receive this OTP.
+
+  const notifyEmergencyContacts = async (user: any, latitude: number | null, longitude: number | null, sosId: string) => {
     if (contactsNotifiedRef.current || !user?.uid) return;
     contactsNotifiedRef.current = true;
+    setSmsStatus('pending');
+    setSmsMessage('Sending SOS alert, live-location link and safety OTP to your emergency contacts...');
+
     try {
-      const contacts = await getContactsForUser(String(user.uid));
-      if (!contacts.length) { contactsNotifiedRef.current = false; return; }
+      const contacts = await getContactsForUser(user);
+      if (!contacts.length) {
+        contactsNotifiedRef.current = false;
+        setSmsStatus('failed');
+        setSmsMessage('No emergency contacts are saved for this account.');
+        return;
+      }
+
       const token = await getStoredToken();
-      const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers.Authorization = `Bearer ${token}`;
+
       const res = await fetch(`${API_URL}/api/sos/notify-contacts`, {
-        method: 'POST', headers,
+        method: 'POST',
+        headers,
         body: JSON.stringify({
           uid: user.uid,
           fullName: user.fullName || user.name || 'WS App User',
-          latitude, longitude,
+          latitude,
+          longitude,
+          sosId,
           contacts,
         }),
       });
-      if (!res.ok) contactsNotifiedRef.current = false;
-    } catch { contactsNotifiedRef.current = false; }
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
+        setSmsStatus('sent');
+        setSmsMessage(data?.message || `SOS alert + live location + OTP accepted for ${data?.sent ?? contacts.length} contact(s).`);
+      } else {
+        contactsNotifiedRef.current = false;
+        setSmsStatus('failed');
+        setSmsMessage(data?.message || 'Emergency contact alert could not be sent.');
+        console.warn('SOS contact SMS failed:', data?.message || 'Unknown error', data?.provider || '');
+      }
+    } catch (e) {
+      contactsNotifiedRef.current = false;
+      setSmsStatus('failed');
+      setSmsMessage('Unable to reach the SOS SMS service.');
+      console.warn('SOS contact SMS request failed:', e);
+    }
   };
 
   const updateRealSosLocation = async (coords: { latitude: number; longitude: number; accuracy?: number | null; policeStation?: string; policeAddress?: string; policeDistanceKm?: number | null }) => {
@@ -201,11 +175,17 @@ export default function AlertScreen() {
     } catch {}
   };
 
-  const loadNearestPolice = async (latitude: number, longitude: number) => {
+  const loadNearestPolice = async (
+    latitude: number,
+    longitude: number,
+    accuracy: number
+  ) => {
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || accuracy > MAX_GPS_ACCURACY_METERS) return;
+
     const fallbackUrl = `https://www.google.com/maps/search/?api=1&query=police+station+near+${latitude},${longitude}`;
     setPolice({
       name: 'Finding nearest police station...',
-      address: 'Searching from your live GPS location',
+      address: 'Searching from your precise live GPS location',
       distanceKm: null,
       mapsUrl: fallbackUrl,
     });
@@ -219,8 +199,8 @@ export default function AlertScreen() {
           { signal: controller.signal }
         );
         clearTimeout(timeoutId);
-
         const data = await res.json();
+
         if (res.ok && data?.success && data.police) {
           const p = data.police;
           const station = {
@@ -233,23 +213,19 @@ export default function AlertScreen() {
           };
 
           setPolice(station);
-
           await updateRealSosLocation({
             latitude,
             longitude,
-            accuracy: location.accuracy,
+            accuracy,
             policeStation: station.name,
             policeAddress: station.address,
             policeDistanceKm: station.distanceKm,
           });
-
           return;
         }
       } catch {}
 
-      if (attempt === 1) {
-        await new Promise(resolve => setTimeout(resolve, 1200));
-      }
+      if (attempt === 1) await new Promise(resolve => setTimeout(resolve, 1200));
     }
 
     setPolice({
@@ -260,38 +236,71 @@ export default function AlertScreen() {
     });
   };
 
-  const applyLocation = (latitude: number, longitude: number, accuracy?: number | null) => {
-    const acc = typeof accuracy === 'number' ? accuracy : null;
-    setLocation({ latitude, longitude, accuracy: acc, text: acc != null ? 'Live GPS location' : 'Live GPS location' });
+  const applyLocation = (
+    latitude: number,
+    longitude: number,
+    accuracy?: number | null
+  ) => {
+    const acc = typeof accuracy === 'number' && Number.isFinite(accuracy) ? accuracy : null;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
+    // Never trust a coarse/unknown GPS fix. In particular, do not search police
+    // stations from readings such as ±100000 m returned by desktop browsers.
+    if (acc == null || acc > MAX_GPS_ACCURACY_METERS) {
+      setLocation(prev => ({
+        ...prev,
+        accuracy: acc,
+        text: acc != null
+          ? `Getting precise GPS location... (±${Math.round(acc)} m)`
+          : 'Getting precise GPS location...',
+      }));
+      setPolice({
+        name: 'Waiting for precise GPS location...',
+        address: 'Police station search will start after a precise GPS fix',
+        distanceKm: null,
+        mapsUrl: '',
+      });
+      return;
+    }
+
+    setLocation({
+      latitude,
+      longitude,
+      accuracy: acc,
+      text: 'Live GPS location',
+    });
     updateRealSosLocation({ latitude, longitude, accuracy: acc });
+
+    // Send the SOS SMS only after we have a usable GPS fix.
     void (async () => {
       const user = await getStoredUser();
-      await notifyEmergencyContacts(user, latitude, longitude);
+      if (alertIdRef.current) {
+        await notifyEmergencyContacts(user, latitude, longitude, alertIdRef.current);
+      }
     })();
+
     if (policeTimerRef.current) clearTimeout(policeTimerRef.current);
-    policeTimerRef.current = setTimeout(() => loadNearestPolice(latitude, longitude), 150);
+    policeTimerRef.current = setTimeout(
+      () => loadNearestPolice(latitude, longitude, acc),
+      150
+    );
   };
 
   const getLiveLocation = async () => {
     if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
+      setLocation(prev => ({ ...prev, text: 'Getting precise GPS location...' }));
       const watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          applyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
-          if (typeof pos.coords.accuracy === 'number' && pos.coords.accuracy <= 50) {
-            navigator.geolocation.clearWatch(watchId);
-            locationWatchRef.current = null;
-          }
+        pos => {
+          const accuracy = pos.coords.accuracy;
+          applyLocation(pos.coords.latitude, pos.coords.longitude, accuracy);
         },
-        () => setLocation({ latitude: null, longitude: null, accuracy: null, text: 'Location permission not available' }),
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+        () => setLocation(prev => ({
+          ...prev,
+          text: 'Precise GPS location unavailable',
+        })),
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
       );
       locationWatchRef.current = watchId;
-      setTimeout(() => {
-        if (locationWatchRef.current != null) {
-          navigator.geolocation.clearWatch(locationWatchRef.current);
-          locationWatchRef.current = null;
-        }
-      }, 15000);
       return;
     }
 
@@ -301,8 +310,28 @@ export default function AlertScreen() {
         setLocation({ latitude: null, longitude: null, accuracy: null, text: 'Location permission denied' });
         return;
       }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
-      applyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+
+      setLocation(prev => ({ ...prev, text: 'Getting precise GPS location...' }));
+      let nativeSubscription: Location.LocationSubscription | null = null;
+      nativeSubscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.Highest,
+          timeInterval: 2000,
+          distanceInterval: 0,
+        },
+        pos => {
+          const accuracy = pos.coords.accuracy;
+          applyLocation(pos.coords.latitude, pos.coords.longitude, accuracy);
+        }
+      );
+      locationWatchRef.current = nativeSubscription;
+
+      setTimeout(() => {
+        if (locationWatchRef.current?.remove) {
+          locationWatchRef.current.remove();
+          locationWatchRef.current = null;
+        }
+      }, 60000);
     } catch {
       setLocation({ latitude: null, longitude: null, accuracy: null, text: 'Unable to get live location' });
     }
@@ -330,9 +359,12 @@ export default function AlertScreen() {
       if (res.ok && data?.success) {
         alertIdRef.current = data.id || null;
         setSosSaved(true);
-        // IMPORTANT: create the Firestore SOS document first, then attach live GPS.
+        // Alert contacts immediately with a live-tracking link. GPS continues updating in parallel.
+        if (alertIdRef.current) {
+          await notifyEmergencyContacts(user, null, null, alertIdRef.current);
+        }
         await getLiveLocation();
-        await sendStopOtp(String(user?.phone || ''));
+
       } else {
         createdRef.current = false;
         console.warn('SOS create failed:', data?.message || 'Unknown error');
@@ -344,8 +376,7 @@ export default function AlertScreen() {
   };
 
   useEffect(() => {
-    // Start vibration
-    Vibration.vibrate([400, 300, 400, 300, 400, 300], true);
+    // Do not vibrate the SOS sender. Receiver notification/alert is handled separately.
     createRealSos();
 
     // Timer
@@ -361,7 +392,6 @@ export default function AlertScreen() {
     loop.start();
 
     return () => {
-      Vibration.cancel();
       clearInterval(timer);
       loop.stop();
       if (Platform.OS === 'web' && typeof navigator !== 'undefined' && locationWatchRef.current != null) {
@@ -376,59 +406,58 @@ export default function AlertScreen() {
     `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
   const handleOtp = (val: string, idx: number) => {
-    const n = [...otp];
-    n[idx] = val;
-    setOtp(n);
-    if (val && idx < 3) inputs[idx + 1].current?.focus();
-    if (n.every(d => d !== '') && n.join('').length === 4) {
-      // All 4 digits entered — stop alert
-      setTimeout(() => markSafe(), 300);
+    const digit = String(val || '').replace(/\D/g, '').slice(-1);
+    const next = [...otp];
+    next[idx] = digit;
+    setOtp(next);
+    if (digit && idx < 3) inputs[idx + 1].current?.focus();
+
+    if (next.every(d => d !== '') && next.join('').length === 4) {
+      setTimeout(() => markSafe(next.join('')), 300);
     }
   };
 
   const handleKey = (e: any, idx: number) => {
-    if (e.nativeEvent.key === 'Backspace' && !otp[idx] && idx > 0)
+    if (e.nativeEvent.key === 'Backspace' && !otp[idx] && idx > 0) {
       inputs[idx - 1].current?.focus();
+    }
   };
 
-  const markSafe = async () => {
+  const markSafe = async (codeOverride?: string) => {
     const user = (await getStoredUser()) || {};
-    const phone = String(user?.phone || '');
-    const code = otp.join('');
+    const token = await getStoredToken();
+    const code = String(codeOverride ?? otp.join('')).replace(/\D/g, '');
+
     if (code.length !== 4) {
-      const msg = 'Enter the 4-digit safety OTP sent to your registered number.';
+      const msg = 'Enter the 4-digit safety OTP received by your emergency contact.';
       if (Platform.OS === 'web') window.alert(msg); else Alert.alert('OTP Required', msg);
       return;
     }
 
+    if (!alertIdRef.current) {
+      const msg = 'SOS alert is not ready yet. Please wait a moment and try again.';
+      if (Platform.OS === 'web') window.alert(msg); else Alert.alert('SOS Not Ready', msg);
+      return;
+    }
+
     try {
-      let response: any;
-      if (Platform.OS === 'web') {
-        const ready = await loadWebOtpSdk();
-        if (!ready || !window.verifyOtp) throw new Error('MSG91 Web OTP is unavailable');
-        response = await new Promise<any>((resolve, reject) => {
-          window.verifyOtp!(code, (data: any) => resolve(data), (error: any) => reject(new Error(error?.message || 'Invalid OTP')), stopOtpReqIdRef.current || undefined);
-        });
-      } else {
-        const mod = await import('@msg91comm/sendotp-react-native');
-        response = await mod.OTPWidget.verifyOTP({ reqId: stopOtpReqIdRef.current, otp: code });
-      }
-      const accessToken = String(response?.message ?? response?.accessToken ?? response?.['access-token'] ?? response?.token ?? '').trim();
-      if (!accessToken) throw new Error(response?.message || 'Invalid OTP');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
 
-      const verifyRes = await fetch(`${API_URL}/api/otp/verify-access-token`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessToken, phone, uid: user?.uid || '' }),
-      });
-      const verifyData = await verifyRes.json();
-      if (!verifyRes.ok || !verifyData?.success) throw new Error(verifyData?.message || 'OTP verification failed');
+      const response = await fetch(
+        `${API_URL}/api/sos/${encodeURIComponent(alertIdRef.current)}/verify-stop-otp`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ uid: user?.uid || user?.id || '', otp: code }),
+        }
+      );
+      const data = await response.json().catch(() => ({}));
 
-      Vibration.cancel();
-      if (alertIdRef.current) {
-        await fetch(`${API_URL}/api/sos/${encodeURIComponent(alertIdRef.current)}/resolve`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        });
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.message || 'Invalid OTP. Alert is still active.');
       }
+
       setSafe(true);
       Animated.timing(safeOpacity, { toValue: 1, duration: 500, useNativeDriver: true }).start();
       setTimeout(() => router.replace('/' as any), 2500);
@@ -451,7 +480,7 @@ export default function AlertScreen() {
           <View style={styles.safeIco}><Text style={{ fontSize: 52 }}>🛡️</Text></View>
           <Text style={styles.safeTitle}>She is Safe!</Text>
           <Text style={styles.safeSub}>
-            Alert stopped. All your emergency contacts have been notified that you are safe.
+            Alert stopped after successful safety OTP verification.
           </Text>
           <View style={styles.safeBadge}>
             <Text style={styles.safeBadgeTxt}>✅ ALERT RESOLVED</Text>
@@ -499,18 +528,19 @@ export default function AlertScreen() {
               </View>
             </View>
           </Animated.View>
-          <Text style={styles.alertTitle}>Emergency Alert Sent!</Text>
+          <Text style={styles.alertTitle}>Emergency Alert Active</Text>
           <Text style={styles.alertSub}>
-            Your SOS alert is being recorded with your live location
+            Your SOS alert is being recorded. GPS and emergency contact delivery are updating below.
           </Text>
         </View>
 
         {/* STATUS ROW */}
         <View style={styles.statusGrid}>
           {[
-            { i: '📡', t: 'Alert Recorded', c: '#4ade80' },
-            { i: '📍', t: 'Location Shared', c: '#4ade80' },
-            { i: '☁️', t: 'Admin Synced',    c: '#4ade80' },
+            { i: '📡', t: 'Alert Recorded', c: sosSaved ? '#4ade80' : '#fbbf24' },
+            { i: '📍', t: 'GPS Location', c: location.latitude != null ? '#4ade80' : '#fbbf24' },
+            { i: '📱', t: smsStatus === 'sent' ? 'SOS SMS Sent' : smsStatus === 'failed' ? 'SOS SMS Failed' : 'SOS SMS Pending', c: smsStatus === 'sent' ? '#4ade80' : smsStatus === 'failed' ? '#f87171' : '#fbbf24' },
+            { i: '☁️', t: 'Admin Synced', c: sosSaved ? '#4ade80' : '#fbbf24' },
           ].map((s, idx) => (
             <View key={idx} style={styles.statusCard}>
               <Text style={styles.statusIco}>{s.i}</Text>
@@ -518,6 +548,11 @@ export default function AlertScreen() {
               <View style={[styles.statusDot, { backgroundColor: s.c }]} />
             </View>
           ))}
+        </View>
+
+        <View style={[styles.smsNotice, smsStatus === 'sent' ? styles.smsNoticeSent : smsStatus === 'failed' ? styles.smsNoticeFailed : styles.smsNoticePending]}>
+          <Text style={styles.smsNoticeTitle}>🚨 Emergency Contact Alert</Text>
+          <Text style={styles.smsNoticeText}>{smsMessage}</Text>
         </View>
 
         {/* LOCATION */}
@@ -579,7 +614,7 @@ export default function AlertScreen() {
           <View style={[styles.cardTopLine, { backgroundColor: 'rgba(74,222,128,0.45)' }]} />
           <Text style={styles.stopTitle}>🛡️ Stop Alert</Text>
           <Text style={styles.stopSub}>
-            Enter 4-digit OTP sent to your registered number to confirm you are safe
+            Enter the 4-digit OTP received by your emergency contact after they find you
           </Text>
 
           <View style={styles.otpRow}>
@@ -599,10 +634,10 @@ export default function AlertScreen() {
             ))}
           </View>
 
-          <Text style={styles.otpHint}>💡 Enter the 4-digit safety OTP to stop the alert</Text>
+          <Text style={styles.otpHint}>💡 Your emergency contact receives this OTP. Enter it here only after they find you.</Text>
 
           {/* Manual safe button */}
-          <TouchableOpacity style={styles.safeBtn} onPress={markSafe} activeOpacity={0.85}>
+          <TouchableOpacity style={styles.safeBtn} onPress={() => markSafe()} activeOpacity={0.85}>
             <Text style={styles.safeBtnTxt}>✅  She is Safe — Stop Alert</Text>
           </TouchableOpacity>
         </View>
@@ -683,11 +718,18 @@ const styles = StyleSheet.create({
   alertTitle:   { color: '#fff', fontSize: 22, fontWeight: '900', marginBottom: 8 },
   alertSub:     { color: 'rgba(255,255,255,0.42)', fontSize: 12, textAlign: 'center' },
 
-  statusGrid:   { flexDirection: 'row', gap: 10, width: '100%', paddingHorizontal: 16, marginVertical: 16 },
-  statusCard:   { flex: 1, backgroundColor: 'rgba(255,255,255,0.07)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 14, padding: 12, alignItems: 'center', gap: 5 },
+  statusGrid:   { flexDirection: 'row', flexWrap: 'wrap', gap: 10, width: '100%', paddingHorizontal: 16, marginVertical: 16 },
+  statusCard:   { flex: 1, minWidth: 135, backgroundColor: 'rgba(255,255,255,0.07)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 14, padding: 12, alignItems: 'center', gap: 5 },
   statusIco:    { fontSize: 20 },
   statusTxt:    { color: 'rgba(255,255,255,0.65)', fontSize: 10, fontWeight: '600', textAlign: 'center' },
   statusDot:    { width: 6, height: 6, borderRadius: 3, shadowColor: '#4ade80', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.9, shadowRadius: 4, elevation: 3 },
+  smsNotice:      { width: '100%', marginHorizontal: 16, borderRadius: 14, padding: 14, borderWidth: 1, marginBottom: 14 },
+  smsNoticeSent:  { backgroundColor: 'rgba(74,222,128,0.08)', borderColor: 'rgba(74,222,128,0.25)' },
+  smsNoticeFailed:{ backgroundColor: 'rgba(248,113,113,0.08)', borderColor: 'rgba(248,113,113,0.25)' },
+  smsNoticePending:{ backgroundColor: 'rgba(251,191,36,0.08)', borderColor: 'rgba(251,191,36,0.25)' },
+  smsNoticeTitle: { color: '#fff', fontSize: 13, fontWeight: '800', marginBottom: 4 },
+  smsNoticeText:  { color: 'rgba(255,255,255,0.55)', fontSize: 12, lineHeight: 18 },
+
 
   card:         { width: '100%', backgroundColor: 'rgba(255,255,255,0.07)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 18, padding: 18, marginBottom: 14, overflow: 'hidden', paddingHorizontal: 16 },
   cardTopLine:  { position: 'absolute', top: 0, left: '15%', right: '15%', height: 1, backgroundColor: 'rgba(201,168,76,0.3)' },
