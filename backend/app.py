@@ -33,9 +33,7 @@ if firebase_json is None:
     if len(possible) == 1:
         firebase_json = possible[0]
     elif len(possible) > 1:
-        raise RuntimeError(
-            "Multiple Firebase service account JSON files were found."
-        )
+        raise RuntimeError("Multiple Firebase service account JSON files were found.")
 
 if firebase_json is None:
     raise FileNotFoundError(
@@ -43,9 +41,7 @@ if firebase_json is None:
     )
 
 if not firebase_admin._apps:
-    firebase_admin.initialize_app(
-        credentials.Certificate(firebase_json)
-    )
+    firebase_admin.initialize_app(credentials.Certificate(firebase_json))
 
 db = firestore.client()
 
@@ -64,11 +60,8 @@ def admin_settings_snapshot():
 
 def firebase_password_signin(email, password):
     key = os.getenv("FIREBASE_WEB_API_KEY")
-
     if not key:
-        raise RuntimeError(
-            "FIREBASE_WEB_API_KEY is missing in backend/.env"
-        )
+        raise RuntimeError("FIREBASE_WEB_API_KEY is missing in backend/.env")
 
     r = requests.post(
         f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={key}",
@@ -99,39 +92,31 @@ def protect_admin_routes():
     header = request.headers.get("Authorization", "")
 
     if not header.startswith("Bearer "):
-        return jsonify({
-            "success": False,
-            "message": "Admin authentication required."
-        }), 401
+        return jsonify(
+            {"success": False, "message": "Admin authentication required."}
+        ), 401
 
     token = header.split(" ", 1)[1].strip()
 
     if not token:
-        return jsonify({
-            "success": False,
-            "message": "Admin authentication required."
-        }), 401
+        return jsonify(
+            {"success": False, "message": "Admin authentication required."}
+        ), 401
 
     try:
         decoded = auth.verify_id_token(token)
         settings = admin_settings_snapshot()
 
-        if (
-            not settings.get("adminUid")
-            or decoded.get("uid") != settings.get("adminUid")
-        ):
-            return jsonify({
-                "success": False,
-                "message": "Not authorized for admin access."
-            }), 403
+        if not settings.get("adminUid") or decoded.get("uid") != settings.get("adminUid"):
+            return jsonify(
+                {"success": False, "message": "Not authorized for admin access."}
+            ), 403
 
         request.admin_uid = decoded.get("uid")
-
     except Exception:
-        return jsonify({
-            "success": False,
-            "message": "Invalid or expired admin session."
-        }), 401
+        return jsonify(
+            {"success": False, "message": "Invalid or expired admin session."}
+        ), 401
 
     return None
 
@@ -145,23 +130,22 @@ def admin_login():
         password = str(data.get("password", ""))
 
         if not admin_id or not password:
-            return jsonify({
-                "success": False,
-                "message": "Admin ID and password are required.",
-            }), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Admin ID and password are required.",
+                }
+            ), 400
 
         settings_ref = db.collection("settings").document("admin")
         settings = admin_settings_snapshot()
 
+        # One-time bootstrap with the original project credentials.
         if not settings.get("adminUid"):
-            if (
-                admin_id != DEFAULT_ADMIN_ID
-                or password != DEFAULT_ADMIN_PASSWORD
-            ):
-                return jsonify({
-                    "success": False,
-                    "message": "Invalid admin ID or password."
-                }), 401
+            if admin_id != DEFAULT_ADMIN_ID or password != DEFAULT_ADMIN_PASSWORD:
+                return jsonify(
+                    {"success": False, "message": "Invalid admin ID or password."}
+                ), 401
 
             email = settings.get("email") or DEFAULT_ADMIN_EMAIL
 
@@ -175,51 +159,53 @@ def admin_login():
                     disabled=False,
                 )
 
-            settings_ref.set({
-                "adminUid": admin_user.uid,
-                "adminId": DEFAULT_ADMIN_ID,
-                "adminName": settings.get("adminName") or "Admin",
-                "phone": settings.get("phone") or DEFAULT_ADMIN_ID,
-                "email": email,
-                "appVersion": settings.get("appVersion") or "v1.0.0",
-                "createdAt": firestore.SERVER_TIMESTAMP,
-                "updatedAt": firestore.SERVER_TIMESTAMP,
-            }, merge=True)
+            settings_ref.set(
+                {
+                    "adminUid": admin_user.uid,
+                    "adminId": DEFAULT_ADMIN_ID,
+                    "adminName": settings.get("adminName") or "Admin",
+                    "phone": settings.get("phone") or DEFAULT_ADMIN_ID,
+                    "email": email,
+                    "appVersion": settings.get("appVersion") or "v1.0.0",
+                    "createdAt": firestore.SERVER_TIMESTAMP,
+                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                },
+                merge=True,
+            )
 
             settings = admin_settings_snapshot()
 
         expected_id = str(settings.get("adminId", "")).strip()
-        email = str(
-            settings.get("email") or DEFAULT_ADMIN_EMAIL
-        ).strip().lower()
+        email = str(settings.get("email") or DEFAULT_ADMIN_EMAIL).strip().lower()
 
         if admin_id != expected_id:
-            return jsonify({
-                "success": False,
-                "message": "Invalid admin ID or password."
-            }), 401
+            return jsonify(
+                {"success": False, "message": "Invalid admin ID or password."}
+            ), 401
 
         code, result = firebase_password_signin(email, password)
 
-        if (
-            code != 200
-            and admin_id == DEFAULT_ADMIN_ID
-            and password == DEFAULT_ADMIN_PASSWORD
-        ):
+        # Recovery for the original bootstrap credentials.
+        if code != 200 and admin_id == DEFAULT_ADMIN_ID and password == DEFAULT_ADMIN_PASSWORD:
             try:
                 admin_user = auth.get_user(settings.get("adminUid"))
 
-                auth.update_user(
-                    admin_user.uid,
-                    disabled=False,
-                    password=DEFAULT_ADMIN_PASSWORD,
-                )
+                if admin_user.disabled:
+                    auth.update_user(
+                        admin_user.uid,
+                        disabled=False,
+                        password=DEFAULT_ADMIN_PASSWORD,
+                    )
+                else:
+                    auth.update_user(
+                        admin_user.uid,
+                        password=DEFAULT_ADMIN_PASSWORD,
+                    )
 
                 code, result = firebase_password_signin(
                     email,
                     DEFAULT_ADMIN_PASSWORD,
                 )
-
             except Exception:
                 pass
 
@@ -232,51 +218,57 @@ def admin_login():
                 "INVALID_LOGIN_CREDENTIALS",
                 "USER_DISABLED",
             }:
-                return jsonify({
+                return jsonify(
+                    {"success": False, "message": "Invalid admin ID or password."}
+                ), 401
+
+            return jsonify(
+                {
                     "success": False,
-                    "message": "Invalid admin ID or password."
-                }), 401
+                    "message": "Admin login failed.",
+                    "error": err or "Unknown Firebase error",
+                }
+            ), 401
 
-            return jsonify({
-                "success": False,
-                "message": "Admin login failed.",
-                "error": err or "Unknown Firebase error",
-            }), 401
-
-        return jsonify({
-            "success": True,
-            "message": "Admin login successful.",
-            "token": result.get("idToken"),
-            "refreshToken": result.get("refreshToken"),
-            "expiresIn": result.get("expiresIn"),
-            "admin": {
-                "uid": settings.get("adminUid"),
-                "adminId": settings.get("adminId"),
-                "adminName": settings.get("adminName") or "Admin",
-                "email": email,
-            },
-        }), 200
+        return jsonify(
+            {
+                "success": True,
+                "message": "Admin login successful.",
+                "token": result.get("idToken"),
+                "refreshToken": result.get("refreshToken"),
+                "expiresIn": result.get("expiresIn"),
+                "admin": {
+                    "uid": settings.get("adminUid"),
+                    "adminId": settings.get("adminId"),
+                    "adminName": settings.get("adminName") or "Admin",
+                    "email": email,
+                },
+            }
+        ), 200
 
     except requests.RequestException:
-        return jsonify({
-            "success": False,
-            "message": "Unable to reach Firebase login service.",
-        }), 503
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to reach Firebase login service.",
+            }
+        ), 503
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to login as admin.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to login as admin.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.post("/api/admin/logout")
 def admin_logout():
-    return jsonify({
-        "success": True,
-        "message": "Admin session ended."
-    })
+    return jsonify(
+        {"success": True, "message": "Admin session ended."}
+    )
 
 
 def serialize(value):
@@ -322,19 +314,23 @@ def now_utc():
 
 @app.get("/")
 def home():
-    return jsonify({
-        "success": True,
-        "message": "WS App Backend is Running",
-        "firebase": "Connected",
-    })
+    return jsonify(
+        {
+            "success": True,
+            "message": "WS App Backend is Running",
+            "firebase": "Connected",
+        }
+    )
 
 
 @app.get("/api/health")
 def health():
-    return jsonify({
-        "success": True,
-        "message": "Backend connection is working",
-    })
+    return jsonify(
+        {
+            "success": True,
+            "message": "Backend connection is working",
+        }
+    )
 
 
 @app.get("/api/firebase-health")
@@ -342,17 +338,21 @@ def firebase_health():
     try:
         db.collection("_system").document("health").get()
 
-        return jsonify({
-            "success": True,
-            "message": "Firebase Firestore connection is working",
-        })
+        return jsonify(
+            {
+                "success": True,
+                "message": "Firebase Firestore connection is working",
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Firebase Firestore connection failed",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Firebase Firestore connection failed",
+                "error": str(e),
+            }
+        ), 500
 
 
 def build_wsapp_email_html(full_name: str, verification_link: str) -> str:
@@ -403,21 +403,13 @@ def build_wsapp_email_html(full_name: str, verification_link: str) -> str:
 </html>"""
 
 
-def send_brevo_email(
-    to_email,
-    to_name,
-    subject,
-    text_content,
-    html_content=None
-):
+def send_brevo_email(to_email, to_name, subject, text_content, html_content=None):
     brevo_key = os.getenv("BREVO_API_KEY", "").strip()
-
     from_email = (
         os.getenv("BREVO_FROM_EMAIL")
         or os.getenv("SMTP_USER")
         or ""
     ).strip().lower()
-
     from_name = (
         os.getenv("BREVO_FROM_NAME")
         or os.getenv("SMTP_FROM_NAME")
@@ -428,23 +420,10 @@ def send_brevo_email(
         return False
 
     payload = {
-        "sender": {
-            "name": from_name,
-            "email": from_email
-        },
-        "to": [{
-            "email": to_email,
-            "name": to_name or "WS App User"
-        }],
+        "sender": {"name": from_name, "email": from_email},
+        "to": [{"email": to_email, "name": to_name or "WS App User"}],
         "subject": subject,
-        "htmlContent": (
-            html_content
-            or "<pre style='font-family:Arial,sans-serif;white-space:pre-wrap'>"
-            + text_content.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            + "</pre>"
-        ),
+        "htmlContent": html_content or "<pre style='font-family:Arial,sans-serif;white-space:pre-wrap'>" + text_content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "</pre>",
         "textContent": text_content,
     }
 
@@ -459,9 +438,7 @@ def send_brevo_email(
             json=payload,
             timeout=20,
         )
-
         return bool(response.ok)
-
     except Exception:
         return False
 
@@ -471,13 +448,16 @@ def send_verification_welcome_email(
     full_name: str,
     verification_link: str,
 ) -> bool:
+    """
+    Send the verification/welcome email through Brevo's Transactional Email API.
 
+    Brevo credentials are read only from environment variables.
+    No API key is stored in the source code.
+    """
     brevo_key = os.getenv("BREVO_API_KEY", "").strip()
 
     if not brevo_key:
-        raise RuntimeError(
-            "BREVO_API_KEY is missing in Render/backend environment."
-        )
+        raise RuntimeError("BREVO_API_KEY is missing in Render/backend environment.")
 
     from_email = (
         os.getenv("BREVO_FROM_EMAIL")
@@ -492,9 +472,7 @@ def send_verification_welcome_email(
     ).strip() or "WS App"
 
     if not from_email:
-        raise RuntimeError(
-            "BREVO_FROM_EMAIL/SMTP_USER is missing."
-        )
+        raise RuntimeError("BREVO_FROM_EMAIL/SMTP_USER is missing.")
 
     text_content = (
         f"Hello {full_name or 'there'},\n\n"
@@ -509,10 +487,12 @@ def send_verification_welcome_email(
             "name": from_name,
             "email": from_email,
         },
-        "to": [{
-            "email": to_email,
-            "name": full_name or "WS App User",
-        }],
+        "to": [
+            {
+                "email": to_email,
+                "name": full_name or "WS App User",
+            }
+        ],
         "subject": "Welcome to WS App — Verify Your Email",
         "htmlContent": build_wsapp_email_html(
             full_name,
@@ -544,7 +524,6 @@ def send_verification_welcome_email(
             or response.text[:300]
             or "Unknown Brevo error"
         )
-
         raise RuntimeError(
             f"Brevo email send failed ({response.status_code}): {message}"
         )
@@ -563,34 +542,32 @@ def register():
         password = str(data.get("password", ""))
 
         if not full_name:
-            return jsonify({
-                "success": False,
-                "message": "Full name is required."
-            }), 400
+            return jsonify(
+                {"success": False, "message": "Full name is required."}
+            ), 400
 
         if not phone:
-            return jsonify({
-                "success": False,
-                "message": "Phone number is required."
-            }), 400
+            return jsonify(
+                {"success": False, "message": "Phone number is required."}
+            ), 400
 
         if not email:
-            return jsonify({
-                "success": False,
-                "message": "Email is required."
-            }), 400
+            return jsonify(
+                {"success": False, "message": "Email is required."}
+            ), 400
 
         if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
-            return jsonify({
-                "success": False,
-                "message": "Enter a valid email address.",
-            }), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Enter a valid email address.",
+                }
+            ), 400
 
         if not password:
-            return jsonify({
-                "success": False,
-                "message": "Password is required."
-            }), 400
+            return jsonify(
+                {"success": False, "message": "Password is required."}
+            ), 400
 
         user = create_user(
             email=email,
@@ -608,11 +585,14 @@ def register():
                 verification_link,
             )
 
-            db.collection("users").document(user.uid).set({
-                "emailVerified": False,
-                "welcomeEmailSentAt": firestore.SERVER_TIMESTAMP,
-                "updatedAt": firestore.SERVER_TIMESTAMP,
-            }, merge=True)
+            db.collection("users").document(user.uid).set(
+                {
+                    "emailVerified": False,
+                    "welcomeEmailSentAt": firestore.SERVER_TIMESTAMP,
+                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                },
+                merge=True,
+            )
 
         except Exception:
             try:
@@ -627,40 +607,45 @@ def register():
 
             raise
 
-        return jsonify({
-            "success": True,
-            "message": (
-                "Account created. Welcome email sent. Verify your email, "
-                "then complete phone OTP."
-            ),
-            "emailVerificationSent": True,
-            "user": {
-                "uid": user.uid,
-                "email": user.email,
-                "fullName": user.display_name,
-                "phone": phone,
-            },
-        }), 201
+        return jsonify(
+            {
+                "success": True,
+                "message": (
+                    "Account created. Welcome email sent. Verify your email, "
+                    "then complete phone OTP."
+                ),
+                "emailVerificationSent": True,
+                "user": {
+                    "uid": user.uid,
+                    "email": user.email,
+                    "fullName": user.display_name,
+                    "phone": phone,
+                },
+            }
+        ), 201
 
     except ValueError as e:
-        return jsonify({
-            "success": False,
-            "message": str(e)
-        }), 400
+        return jsonify(
+            {"success": False, "message": str(e)}
+        ), 400
 
     except Exception as e:
         msg = str(e)
 
         if "EMAIL_EXISTS" in msg or "already exists" in msg.lower():
-            return jsonify({
-                "success": False,
-                "message": "This email is already registered.",
-            }), 409
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "This email is already registered.",
+                }
+            ), 409
 
-        return jsonify({
-            "success": False,
-            "message": str(e) or "Unable to create account.",
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": str(e) or "Unable to create account.",
+            }
+        ), 500
 
 
 @app.post("/api/login")
@@ -672,24 +657,30 @@ def login():
         password = str(data.get("password", ""))
 
         if not re.fullmatch(r"\d{10}", phone):
-            return jsonify({
-                "success": False,
-                "message": "Enter a valid 10-digit mobile number.",
-            }), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Enter a valid 10-digit mobile number.",
+                }
+            ), 400
 
         if not password:
-            return jsonify({
-                "success": False,
-                "message": "Password is required.",
-            }), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Password is required.",
+                }
+            ), 400
 
         key = os.getenv("FIREBASE_WEB_API_KEY")
 
         if not key:
-            return jsonify({
-                "success": False,
-                "message": "FIREBASE_WEB_API_KEY is missing in backend/.env",
-            }), 500
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "FIREBASE_WEB_API_KEY is missing in backend/.env",
+                }
+            ), 500
 
         docs = (
             db.collection("users")
@@ -701,22 +692,24 @@ def login():
         doc = next(docs, None)
 
         if doc is None:
-            return jsonify({
-                "success": False,
-                "message": "Invalid phone number or password.",
-            }), 401
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Invalid phone number or password.",
+                }
+            ), 401
 
         user_data = doc.to_dict() or {}
 
-        email = str(
-            user_data.get("email", "")
-        ).strip().lower()
+        email = str(user_data.get("email", "")).strip().lower()
 
         if not email:
-            return jsonify({
-                "success": False,
-                "message": "User email was not found.",
-            }), 500
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "User email was not found.",
+                }
+            ), 500
 
         r = requests.post(
             f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={key}",
@@ -742,60 +735,72 @@ def login():
                 "INVALID_LOGIN_CREDENTIALS",
                 "USER_DISABLED",
             }:
-                return jsonify({
-                    "success": False,
-                    "message": "Invalid phone number or password.",
-                }), 401
+                return jsonify(
+                    {
+                        "success": False,
+                        "message": "Invalid phone number or password.",
+                    }
+                ), 401
 
-            return jsonify({
-                "success": False,
-                "message": "Login failed.",
-                "error": err or "Unknown Firebase error",
-            }), 401
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Login failed.",
+                    "error": err or "Unknown Firebase error",
+                }
+            ), 401
 
         fu = auth.get_user(result.get("localId"))
 
         if not fu.email_verified:
-            return jsonify({
-                "success": False,
-                "message": (
-                    "Please verify your email address before signing in."
-                ),
-                "emailVerified": False,
-            }), 403
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Please verify your email address before signing in.",
+                    "emailVerified": False,
+                }
+            ), 403
 
-        return jsonify({
-            "success": True,
-            "message": "Login successful.",
-            "token": result.get("idToken"),
-            "refreshToken": result.get("refreshToken"),
-            "expiresIn": result.get("expiresIn"),
-            "welcomeEmailSent": False,
-            "user": {
-                "uid": fu.uid,
-                "email": fu.email,
-                "fullName": user_data.get("fullName", ""),
-                "phone": user_data.get("phone", phone),
-            },
-        })
+        # Welcome + verification is sent once at registration.
+        return jsonify(
+            {
+                "success": True,
+                "message": "Login successful.",
+                "token": result.get("idToken"),
+                "refreshToken": result.get("refreshToken"),
+                "expiresIn": result.get("expiresIn"),
+                "welcomeEmailSent": False,
+                "user": {
+                    "uid": fu.uid,
+                    "email": fu.email,
+                    "fullName": user_data.get("fullName", ""),
+                    "phone": user_data.get("phone", phone),
+                },
+            }
+        )
 
     except requests.RequestException:
-        return jsonify({
-            "success": False,
-            "message": "Unable to reach Firebase login service.",
-        }), 503
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to reach Firebase login service.",
+            }
+        ), 503
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to login.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to login.",
+                "error": str(e),
+            }
+        ), 500
 
 
-# ---------------- USER ACCOUNT ----------------
+# ---------------- USER ACCOUNT SOFT-DELETE ----------------
 
 def require_user_from_token():
+    """Return the authenticated Firebase user decoded from the Bearer ID token."""
     header = request.headers.get("Authorization", "")
 
     if not header.startswith("Bearer "):
@@ -821,7 +826,6 @@ def require_user_from_token():
         }), 401)
 
     uid = str(decoded.get("uid") or "").strip()
-
     if not uid:
         return None, (jsonify({
             "success": False,
@@ -833,9 +837,9 @@ def require_user_from_token():
 
 @app.post("/api/account/deactivate")
 def deactivate_account():
+    """Soft-delete the currently signed-in user without removing Firestore data."""
     try:
         decoded, error_response = require_user_from_token()
-
         if error_response is not None:
             return error_response
 
@@ -850,21 +854,17 @@ def deactivate_account():
             }), 404
 
         current = user_snap.to_dict() or {}
-        current_status = str(
-            current.get("status") or "active"
-        ).strip().lower()
+        current_status = str(current.get("status") or "active").strip().lower()
 
-        if current_status in {
-            "deleted",
-            "deactivated",
-            "archived"
-        }:
+        if current_status in {"deleted", "deactivated", "archived"}:
             return jsonify({
                 "success": True,
                 "status": "deleted",
                 "message": "Account is already deactivated."
             }), 200
 
+        # Disable Firebase Authentication so the account cannot sign in while
+        # keeping Firestore data available for later recovery.
         auth.update_user(uid, disabled=True)
 
         user_ref.set({
@@ -877,10 +877,7 @@ def deactivate_account():
         return jsonify({
             "success": True,
             "status": "deleted",
-            "message": (
-                "Your account has been deactivated. "
-                "You can recover it through the administrator restore flow."
-            )
+            "message": "Your account has been deactivated. You can recover it through the administrator restore flow."
         }), 200
 
     except Exception as e:
@@ -893,9 +890,9 @@ def deactivate_account():
 
 @app.get("/api/account/status")
 def account_status():
+    """Return the soft-delete state of the currently signed-in user."""
     try:
         decoded, error_response = require_user_from_token()
-
         if error_response is not None:
             return error_response
 
@@ -909,17 +906,10 @@ def account_status():
             }), 404
 
         data = snap.to_dict() or {}
+        status = str(data.get("status") or "active").strip().lower()
 
-        status = str(
-            data.get("status") or "active"
-        ).strip().lower()
-
-        if (
-            status in {"deleted", "deactivated", "archived"}
-            or bool(data.get("isDeleted"))
-        ):
+        if status in {"deleted", "deactivated", "archived"} or bool(data.get("isDeleted")):
             status = "deleted"
-
         elif status not in {"active", "blocked"}:
             status = "active"
 
@@ -939,31 +929,18 @@ def account_status():
 
 @app.get("/api/user/stats")
 def user_stats():
+    """Return authenticated user's SOS and complaint counts for the Profile screen."""
     try:
         decoded, error_response = require_user_from_token()
-
         if error_response is not None:
             return error_response
 
         uid = str(decoded.get("uid") or "").strip()
-
         if not uid:
-            return jsonify({
-                "success": False,
-                "message": "Invalid user session."
-            }), 401
+            return jsonify({"success": False, "message": "Invalid user session."}), 401
 
-        sos_count = sum(
-            1 for _ in db.collection("sosAlerts")
-            .where("uid", "==", uid)
-            .stream()
-        )
-
-        report_count = sum(
-            1 for _ in db.collection("complaints")
-            .where("uid", "==", uid)
-            .stream()
-        )
+        sos_count = sum(1 for _ in db.collection("sosAlerts").where("uid", "==", uid).stream())
+        report_count = sum(1 for _ in db.collection("complaints").where("uid", "==", uid).stream())
 
         return jsonify({
             "success": True,
@@ -980,8 +957,16 @@ def user_stats():
         }), 500
 
 
+# ---------------- USER ACCOUNT ----------------
+
 @app.post("/api/account/delete")
 def delete_own_account():
+    """Permanently remove the signed-in user's Firebase Auth account and profile document.
+
+    Existing SOS/complaint records are intentionally kept for application history/audit,
+    while the authentication account and personal profile document are removed.
+    The same email/phone can then be registered again as a brand-new account.
+    """
     try:
         header = request.headers.get("Authorization", "")
 
@@ -1008,32 +993,30 @@ def delete_own_account():
                 "message": "Invalid user session.",
             }), 401
 
+        # Delete the Firebase Authentication account first.
         auth.delete_user(uid)
 
+        # Remove the user's personal profile document so a new registration
+        # starts cleanly with the same email/phone if desired.
         db.collection("users").document(uid).delete()
 
         return jsonify({
             "success": True,
-            "message": (
-                "Account deleted permanently. "
-                "You can register again as a new user."
-            ),
+            "message": "Account deleted permanently. You can register again as a new user.",
             "accountDeleted": True,
         }), 200
 
     except auth.UserNotFoundError:
+        # Already deleted from Firebase Auth; clean up the Firestore profile too.
         try:
-            if "uid" in locals() and uid:
+            if 'uid' in locals() and uid:
                 db.collection("users").document(uid).delete()
         except Exception:
             pass
 
         return jsonify({
             "success": True,
-            "message": (
-                "Account is already deleted. "
-                "You can register again as a new user."
-            ),
+            "message": "Account is already deleted. You can register again as a new user.",
             "accountDeleted": True,
         }), 200
 
@@ -1122,40 +1105,42 @@ def create_sos_alert():
 
         ref = db.collection("sosAlerts").document()
 
-        ref.set({
-            "uid": uid,
-            "fullName": full_name,
-            "phone": phone,
-            "email": email,
-            "latitude": data.get("latitude"),
-            "longitude": data.get("longitude"),
-            "accuracy": data.get("accuracy"),
-            "locationText": data.get("locationText"),
-            "address": (
-                data.get("address")
-                or data.get("locationText")
-                or ""
-            ),
-            "policeStation": data.get("policeStation") or "",
-            "policeAddress": data.get("policeAddress") or "",
-            "policeDistanceKm": data.get("policeDistanceKm"),
-            "status": "pending",
-            "createdAt": firestore.SERVER_TIMESTAMP,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-        })
+        ref.set(
+            {
+                "uid": uid,
+                "fullName": full_name,
+                "phone": phone,
+                "email": email,
+                "latitude": data.get("latitude"),
+                "longitude": data.get("longitude"),
+                "accuracy": data.get("accuracy"),
+                "locationText": data.get("locationText"),
+                "address": data.get("address") or data.get("locationText") or "",
+                "policeStation": data.get("policeStation") or "",
+                "policeAddress": data.get("policeAddress") or "",
+                "policeDistanceKm": data.get("policeDistanceKm"),
+                "status": "pending",
+                "createdAt": firestore.SERVER_TIMESTAMP,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            }
+        )
 
-        return jsonify({
-            "success": True,
-            "id": ref.id,
-            "status": "pending",
-        }), 201
+        return jsonify(
+            {
+                "success": True,
+                "id": ref.id,
+                "status": "pending",
+            }
+        ), 201
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to create SOS alert.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to create SOS alert.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.patch("/api/sos/<doc_id>/location")
@@ -1167,10 +1152,12 @@ def update_sos_location(doc_id):
         lon = data.get("longitude")
 
         if lat is None or lon is None:
-            return jsonify({
-                "success": False,
-                "message": "Latitude and longitude are required.",
-            }), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Latitude and longitude are required.",
+                }
+            ), 400
 
         payload = {
             "latitude": float(lat),
@@ -1196,426 +1183,349 @@ def update_sos_location(doc_id):
         return jsonify({"success": True})
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to update SOS location.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to update SOS location.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.patch("/api/sos/<doc_id>/resolve")
 def resolve_user_sos(doc_id):
     try:
-        db.collection("sosAlerts").document(doc_id).set({
-            "status": "resolved",
-            "resolvedAt": firestore.SERVER_TIMESTAMP,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-        }, merge=True)
+        db.collection("sosAlerts").document(doc_id).set(
+            {
+                "status": "resolved",
+                "resolvedAt": firestore.SERVER_TIMESTAMP,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+
+        return jsonify(
+            {
+                "success": True,
+                "status": "resolved",
+            }
+        )
+
+    except Exception as e:
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to resolve SOS alert.",
+                "error": str(e),
+            }
+        ), 500
+
+
+
+@app.post("/api/sos/notify-contacts")
+def notify_sos_contacts():
+    """Send an SOS SMS to the user's saved emergency contacts through MSG91 Flow API."""
+    try:
+        data = request.get_json(silent=True) or {}
+        contacts = data.get("contacts") or []
+        uid = str(data.get("uid") or "").strip()
+        full_name = str(data.get("fullName") or "WS App User").strip()
+        lat = data.get("latitude")
+        lon = data.get("longitude")
+
+        if not contacts:
+            return jsonify({"success": True, "sent": 0, "message": "No emergency contacts saved."}), 200
+        if lat is None or lon is None:
+            return jsonify({"success": False, "message": "Live GPS location is required before sending SOS SMS."}), 400
+
+        authkey = str(os.getenv("MSG91_AUTHKEY") or "").strip()
+        template_id = str(os.getenv("MSG91_SMS_TEMPLATE_ID") or "").strip()
+        flow_id = str(os.getenv("MSG91_SMS_FLOW_ID") or "").strip()
+        sender = str(os.getenv("MSG91_SMS_SENDER") or "").strip()
+
+        if not authkey:
+            return jsonify({"success": False, "message": "SOS SMS service is not configured."}), 503
+        if not template_id and not flow_id:
+            return jsonify({"success": False, "message": "SOS SMS template/flow is not configured."}), 503
+
+        maps_url = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+        recipients = []
+        for contact in contacts[:5]:
+            raw_phone = str((contact or {}).get("phone") or "").strip()
+            digits = "".join(ch for ch in raw_phone if ch.isdigit())
+            if digits.startswith("0") and len(digits) == 11:
+                digits = digits[1:]
+            if digits.startswith("91") and len(digits) == 12:
+                mobile = digits
+            elif len(digits) == 10:
+                mobile = "91" + digits
+            else:
+                continue
+            recipients.append({
+                "mobiles": mobile,
+                "VAR1": full_name,
+                "VAR2": f"{lat},{lon}",
+                "VAR3": maps_url,
+            })
+
+        if not recipients:
+            return jsonify({"success": False, "message": "No valid emergency contact numbers found."}), 400
+
+        body = {"recipients": recipients}
+        if template_id:
+            body["template_id"] = template_id
+        else:
+            body["flow_id"] = flow_id
+            if sender:
+                body["sender"] = sender
+
+        response = requests.post(
+            "https://control.msg91.com/api/v5/flow",
+            headers={
+                "accept": "application/json",
+                "authkey": authkey,
+                "content-type": "application/json",
+            },
+            json=body,
+            timeout=15,
+        )
+
+        try:
+            result = response.json()
+        except Exception:
+            result = {"raw": response.text}
+
+        if not response.ok:
+            return jsonify({"success": False, "message": "MSG91 rejected the SOS SMS request.", "provider": result}), 502
 
         return jsonify({
             "success": True,
-            "status": "resolved",
-        })
+            "sent": len(recipients),
+            "message": "SOS SMS request accepted by MSG91.",
+            "provider": result,
+        }), 200
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to resolve SOS alert.",
-            "error": str(e),
-        }), 500
-
-
-# ============================================================
-# FIXED NEAREST POLICE STATION ENDPOINT
-# ============================================================
+        return jsonify({"success": False, "message": "Unable to send SOS SMS.", "error": str(e)}), 500
 
 @app.get("/api/police/nearest")
 def nearest_police():
+    """Find the nearest mapped police station using free public OSM/Overpass services."""
     try:
-        lat_value = request.args.get("lat")
-        lon_value = request.args.get("lon")
-
-        if lat_value is None or lon_value is None:
-            return jsonify({
+        lat = float(request.args.get("lat"))
+        lon = float(request.args.get("lon"))
+    except (TypeError, ValueError):
+        return jsonify(
+            {
                 "success": False,
                 "message": "Valid latitude and longitude are required.",
-            }), 400
-
-        lat = float(lat_value)
-        lon = float(lon_value)
-
-    except (TypeError, ValueError):
-        return jsonify({
-            "success": False,
-            "message": "Valid latitude and longitude are required.",
-        }), 400
+            }
+        ), 400
 
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-        return jsonify({
-            "success": False,
-            "message": "Latitude or longitude is out of range.",
-        }), 400
+        return jsonify(
+            {
+                "success": False,
+                "message": "Latitude or longitude is out of range.",
+            }
+        ), 400
 
-    def make_candidate(name, address, p_lat, p_lon):
+    # Search two common OSM police tags within 10 km.
+    query = (
+        f'[out:json][timeout:6];'
+        f'('
+        f'nwr["amenity"="police"](around:10000,{lat},{lon});'
+        f'nwr["police"](around:10000,{lat},{lon});'
+        f');'
+        f'out center tags;'
+    )
+
+    endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+    ]
+
+    def make_candidate(item):
+        center = item.get("center") or {}
+        p_lat = item.get("lat", center.get("lat"))
+        p_lon = item.get("lon", center.get("lon"))
+
+        if p_lat is None or p_lon is None:
+            return None
+
         try:
             p_lat = float(p_lat)
             p_lon = float(p_lon)
         except (TypeError, ValueError):
             return None
 
-        if not (-90 <= p_lat <= 90 and -180 <= p_lon <= 180):
-            return None
+        distance = haversine_km(lat, lon, p_lat, p_lon)
+        tags = item.get("tags") or {}
 
-        distance = haversine_km(
-            lat,
-            lon,
-            p_lat,
-            p_lon
+        name = (
+            tags.get("name")
+            or tags.get("name:en")
+            or tags.get("official_name")
+            or "Police Station"
         )
 
+        address_parts = [
+            tags.get(key)
+            for key in (
+                "addr:housenumber",
+                "addr:street",
+                "addr:suburb",
+                "addr:city",
+                "addr:district",
+            )
+            if tags.get(key)
+        ]
+
         return {
-            "name": str(
-                name or "Police Station"
-            ).strip() or "Police Station",
-
-            "address": str(
-                address or "Nearby police station"
-            ).strip() or "Nearby police station",
-
+            "name": name,
+            "address": ", ".join(address_parts) or "Nearby police station",
             "latitude": p_lat,
             "longitude": p_lon,
-
-            "distanceKm": round(
-                distance,
-                2
-            ),
-
+            "distanceKm": round(distance, 2),
             "mapsUrl": (
                 "https://www.google.com/maps/search/"
                 f"?api=1&query={p_lat},{p_lon}"
             ),
         }
 
+    def query_overpass(endpoint):
+        response = requests.post(
+            endpoint,
+            data=query,
+            headers={
+                "User-Agent": "WSApp/1.0 (+https://github.com/tamilanbu0475-lang/WSApp)",
+                "Accept": "application/json",
+            },
+            timeout=7,
+        )
+        response.raise_for_status()
+        body = response.json()
+        return body.get("elements", []) if isinstance(body, dict) else []
+
     best = None
 
-    # --------------------------------------------------------
-    # 1. Nominatim
-    # --------------------------------------------------------
-
-    radius_deg = 0.20
-
-    west = lon - radius_deg
-    east = lon + radius_deg
-    south = lat - radius_deg
-    north = lat + radius_deg
-
-    nominatim_queries = [
-        "police station",
-        "police",
-    ]
-
-    for query_text in nominatim_queries:
-        try:
-            response = requests.get(
-                "https://nominatim.openstreetmap.org/search",
-                params={
-                    "q": query_text,
-                    "format": "jsonv2",
-                    "limit": 50,
-                    "countrycodes": "in",
-                    "viewbox": (
-                        f"{west},{north},"
-                        f"{east},{south}"
-                    ),
-                    "bounded": 1,
-                    "addressdetails": 1,
-                    "dedupe": 1,
-                },
-                headers={
-                    "User-Agent": (
-                        "WSApp/1.0 "
-                        "(https://github.com/tamilanbu0475-lang/WSApp)"
-                    ),
-                    "Accept": "application/json",
-                    "Accept-Language": "en-IN,en",
-                },
-                timeout=8,
-            )
-
-            response.raise_for_status()
-
-            results = response.json()
-
-            if not isinstance(results, list):
-                continue
-
-            for item in results:
-                item_lat = item.get("lat")
-                item_lon = item.get("lon")
-
-                if item_lat is None or item_lon is None:
-                    continue
-
-                item_name = str(
-                    item.get("name")
-                    or item.get("display_name")
-                    or ""
-                )
-
-                item_type = str(
-                    item.get("type")
-                    or ""
-                ).lower()
-
-                item_class = str(
-                    item.get("class")
-                    or ""
-                ).lower()
-
-                search_text = (
-                    f"{item_name} "
-                    f"{item_type} "
-                    f"{item_class}"
-                ).lower()
-
-                # Only accept actual police-related results.
-                if (
-                    "police" not in search_text
-                    and "station" not in search_text
-                ):
-                    continue
-
-                address_data = item.get("address") or {}
-
-                address_parts = [
-                    address_data.get("house_number"),
-                    address_data.get("road"),
-                    address_data.get("suburb"),
-                    address_data.get("neighbourhood"),
-                    address_data.get("city"),
-                    address_data.get("town"),
-                    address_data.get("village"),
-                    address_data.get("state_district"),
-                    address_data.get("state"),
-                ]
-
-                clean_parts = []
-
-                for part in address_parts:
-                    if part:
-                        value = str(part).strip()
-
-                        if value and value not in clean_parts:
-                            clean_parts.append(value)
-
-                address = ", ".join(clean_parts)
-
-                if not address:
-                    address = str(
-                        item.get("display_name")
-                        or "Nearby police station"
-                    )
-
-                candidate = make_candidate(
-                    item_name or "Police Station",
-                    address,
-                    item_lat,
-                    item_lon,
-                )
-
-                if candidate is None:
-                    continue
-
-                if (
-                    best is None
-                    or candidate["distanceKm"]
-                    < best["distanceKm"]
-                ):
-                    best = candidate
-
-            if best is not None:
-                return jsonify({
-                    "success": True,
-                    "police": best,
-                }), 200
-
-        except Exception:
-            continue
-
-    # --------------------------------------------------------
-    # 2. Overpass fallback
-    # --------------------------------------------------------
-
-    query = f"""
-[out:json][timeout:15];
-(
-  nwr["amenity"="police"](around:20000,{lat},{lon});
-  nwr["police"](around:20000,{lat},{lon});
-);
-out center tags;
-"""
-
-    endpoints = [
-        "https://overpass-api.de/api/interpreter",
-        "https://overpass.private.coffee/api/interpreter",
-        "https://overpass.kumi.systems/api/interpreter",
-    ]
-
-    def query_overpass(endpoint):
-        try:
-            response = requests.post(
-                endpoint,
-                data=query,
-                headers={
-                    "User-Agent": (
-                        "WSApp/1.0 "
-                        "(https://github.com/tamilanbu0475-lang/WSApp)"
-                    ),
-                    "Accept": "application/json",
-                    "Content-Type": "text/plain",
-                },
-                timeout=15,
-            )
-
-            response.raise_for_status()
-
-            body = response.json()
-
-            if not isinstance(body, dict):
-                return []
-
-            elements = body.get("elements")
-
-            return elements if isinstance(elements, list) else []
-
-        except Exception:
-            return []
-
+    # Query two public endpoints in parallel so one slow server does not block
+    # the other one from starting.
     try:
-        from concurrent.futures import (
-            ThreadPoolExecutor,
-            as_completed,
-        )
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        with ThreadPoolExecutor(
-            max_workers=len(endpoints)
-        ) as executor:
-
+        with ThreadPoolExecutor(max_workers=2) as executor:
             futures = {
-                executor.submit(
-                    query_overpass,
-                    endpoint
-                ): endpoint
+                executor.submit(query_overpass, endpoint): endpoint
                 for endpoint in endpoints
             }
 
             for future in as_completed(futures):
-
                 try:
                     elements = future.result()
                 except Exception:
                     continue
 
                 for item in elements:
-                    center = item.get("center") or {}
-
-                    p_lat = item.get("lat")
-
-                    if p_lat is None:
-                        p_lat = center.get("lat")
-
-                    p_lon = item.get("lon")
-
-                    if p_lon is None:
-                        p_lon = center.get("lon")
-
-                    if p_lat is None or p_lon is None:
-                        continue
-
-                    tags = item.get("tags") or {}
-
-                    name = (
-                        tags.get("name")
-                        or tags.get("name:en")
-                        or tags.get("official_name")
-                        or tags.get("short_name")
-                        or "Police Station"
-                    )
-
-                    address_parts = [
-                        tags.get("addr:housenumber"),
-                        tags.get("addr:street"),
-                        tags.get("addr:suburb"),
-                        tags.get("addr:neighbourhood"),
-                        tags.get("addr:city"),
-                        tags.get("addr:district"),
-                        tags.get("addr:state"),
-                    ]
-
-                    clean_parts = []
-
-                    for part in address_parts:
-                        if part:
-                            value = str(part).strip()
-
-                            if value and value not in clean_parts:
-                                clean_parts.append(value)
-
-                    address = ", ".join(clean_parts)
-
-                    if not address:
-                        address = "Nearby police station"
-
-                    candidate = make_candidate(
-                        name,
-                        address,
-                        p_lat,
-                        p_lon,
-                    )
-
+                    candidate = make_candidate(item)
                     if candidate is None:
                         continue
 
-                    if (
-                        best is None
-                        or candidate["distanceKm"]
-                        < best["distanceKm"]
-                    ):
+                    if best is None or candidate["distanceKm"] < best["distanceKm"]:
                         best = candidate
 
     except Exception:
-        pass
+        best = None
+
+    # Third public endpoint as a fallback if the first two fail.
+    if best is None:
+        fallback_endpoint = (
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+        )
+
+        try:
+            elements = query_overpass(fallback_endpoint)
+
+            for item in elements:
+                candidate = make_candidate(item)
+                if candidate is None:
+                    continue
+
+                if best is None or candidate["distanceKm"] < best["distanceKm"]:
+                    best = candidate
+        except Exception:
+            pass
 
     if best is not None:
-        return jsonify({
-            "success": True,
-            "police": best,
-        }), 200
+        return jsonify(
+            {
+                "success": True,
+                "police": best,
+            }
+        ), 200
 
-    # --------------------------------------------------------
-    # 3. Final Google Maps fallback
-    # --------------------------------------------------------
+    # Nominatim fallback: use OpenStreetMap's public geocoder and rank results by Haversine distance.
+    try:
+        response = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "q": "police station",
+                "format": "jsonv2",
+                "limit": 10,
+                "addressdetails": 1,
+                "lat": lat,
+                "lon": lon,
+            },
+            headers={"User-Agent": "WSApp/1.0 (+https://github.com/tamilanbu0475-lang/WSApp)"},
+            timeout=8,
+        )
+        if response.ok:
+            best = None
+            for item in response.json() or []:
+                try:
+                    p_lat = float(item.get("lat"))
+                    p_lon = float(item.get("lon"))
+                except (TypeError, ValueError):
+                    continue
+                distance = haversine_km(lat, lon, p_lat, p_lon)
+                candidate = {
+                    "name": item.get("display_name", "Police Station").split(",")[0],
+                    "address": item.get("display_name", "Nearby police station"),
+                    "latitude": p_lat,
+                    "longitude": p_lon,
+                    "distanceKm": round(distance, 2),
+                    "mapsUrl": f"https://www.google.com/maps/search/?api=1&query={p_lat},{p_lon}",
+                }
+                if best is None or candidate["distanceKm"] < best["distanceKm"]:
+                    best = candidate
+            if best is not None:
+                return jsonify({"success": True, "police": best, "source": "nominatim"}), 200
+    except Exception:
+        pass
 
-    maps_search_url = (
-        "https://www.google.com/maps/search/"
-        "?api=1"
-        f"&query=police+station+near+{lat},{lon}"
-    )
-
-    return jsonify({
-        "success": False,
-        "message": (
-            "Nearby police station could not be found "
-            "from the available map services."
-        ),
-        "mapsSearchUrl": maps_search_url,
-    }), 404
+    # Keep the SOS screen usable even when public map directories are unavailable.
+    return jsonify(
+        {
+            "success": False,
+            "message": "No nearby police station found right now.",
+            "mapsSearchUrl": (
+                "https://www.google.com/maps/search/"
+                f"?api=1&query=police+station+near+{lat},{lon}"
+            ),
+        }
+    ), 404
 
 
 # ---------------- ADMIN DATA ----------------
 
 @app.get("/api/admin/users")
 def admin_users():
+    """Load admin user list from Firestore efficiently.
+
+    Firestore is the source of truth for the admin-visible status. We avoid
+    calling Firebase Authentication once per user because that N+1 lookup
+    pattern makes the Users page slower as the user count grows.
+    """
     try:
         rows = []
 
@@ -1635,41 +1545,43 @@ def admin_users():
                 }
             ):
                 display_status = "deleted"
-
             elif stored_status == "blocked":
                 display_status = "blocked"
-
             else:
                 display_status = "active"
 
-            rows.append({
-                "uid": d.get("uid", doc.id),
-                "fullName": d.get("fullName", ""),
-                "phone": d.get("phone", ""),
-                "email": d.get("email", ""),
-                "createdAt": d.get("createdAt"),
-                "status": display_status,
-            })
+            rows.append(
+                {
+                    "uid": d.get("uid", doc.id),
+                    "fullName": d.get("fullName", ""),
+                    "phone": d.get("phone", ""),
+                    "email": d.get("email", ""),
+                    "createdAt": d.get("createdAt"),
+                    "status": display_status,
+                }
+            )
 
         rows.sort(
-            key=lambda x: str(
-                x.get("createdAt") or ""
-            ),
+            key=lambda x: str(x.get("createdAt") or ""),
             reverse=True,
         )
 
-        return jsonify({
-            "success": True,
-            "count": len(rows),
-            "users": rows,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "count": len(rows),
+                "users": rows,
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to load users.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to load users.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.patch("/api/admin/users/<uid>/status")
@@ -1677,38 +1589,21 @@ def admin_user_status(uid):
     try:
         data = request.get_json(silent=True) or {}
 
-        requested_status = str(
-            data.get("status") or ""
-        ).strip().lower()
+        requested_status = str(data.get("status") or "").strip().lower()
 
         if requested_status:
-            if requested_status not in {
-                "active",
-                "blocked",
-                "deleted",
-            }:
+            if requested_status not in {"active", "blocked", "deleted"}:
                 return jsonify({
                     "success": False,
-                    "message": (
-                        "Status must be active, blocked, or deleted."
-                    ),
+                    "message": "Status must be active, blocked, or deleted.",
                 }), 400
-
             status = requested_status
-
         else:
             blocked = bool(data.get("blocked"))
             status = "blocked" if blocked else "active"
 
-        disabled = status in {
-            "blocked",
-            "deleted"
-        }
-
-        auth.update_user(
-            uid,
-            disabled=disabled
-        )
+        disabled = status in {"blocked", "deleted"}
+        auth.update_user(uid, disabled=disabled)
 
         payload = {
             "status": status,
@@ -1742,6 +1637,7 @@ def admin_user_status(uid):
 
 @app.post("/api/admin/users/<uid>/restore")
 def admin_restore_user(uid):
+    """Restore a soft-deleted user without creating a new Firebase account."""
     try:
         user_ref = db.collection("users").document(uid)
         snap = user_ref.get()
@@ -1752,10 +1648,7 @@ def admin_restore_user(uid):
                 "message": "User profile was not found.",
             }), 404
 
-        auth.update_user(
-            uid,
-            disabled=False
-        )
+        auth.update_user(uid, disabled=False)
 
         user_ref.set({
             "status": "active",
@@ -1802,12 +1695,7 @@ def admin_sos():
 
         pending = sum(
             str(x.get("status", "pending")).lower()
-            in {
-                "pending",
-                "active",
-                "critical",
-                "open"
-            }
+            in {"pending", "active", "critical", "open"}
             for x in rows
         )
 
@@ -1826,26 +1714,28 @@ def admin_sos():
         month_prefix = today.strftime("%Y-%m")
 
         month_total = sum(
-            str(
-                x.get("createdAt") or ""
-            ).startswith(month_prefix)
+            str(x.get("createdAt") or "").startswith(month_prefix)
             for x in rows
         )
 
-        return jsonify({
-            "success": True,
-            "alerts": rows,
-            "pending": pending,
-            "resolvedToday": resolved_today,
-            "monthTotal": month_total,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "alerts": rows,
+                "pending": pending,
+                "resolvedToday": resolved_today,
+                "monthTotal": month_total,
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to load SOS alerts.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to load SOS alerts.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.patch("/api/admin/sos/<doc_id>/status")
@@ -1863,10 +1753,12 @@ def admin_sos_status(doc_id):
             "resolved",
             "cancelled",
         }:
-            return jsonify({
-                "success": False,
-                "message": "Invalid SOS status.",
-            }), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Invalid SOS status.",
+                }
+            ), 400
 
         payload = {
             "status": status,
@@ -1881,17 +1773,21 @@ def admin_sos_status(doc_id):
             merge=True,
         )
 
-        return jsonify({
-            "success": True,
-            "status": status,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "status": status,
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to update SOS alert.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to update SOS alert.",
+                "error": str(e),
+            }
+        ), 500
 
 
 # ---------------- USER COMPLAINTS ----------------
@@ -1900,23 +1796,13 @@ def admin_sos_status(doc_id):
 def create_complaint():
     try:
         decoded, error_response = require_user_from_token()
-
         if error_response is not None:
             return error_response
 
         data = request.get_json(silent=True) or {}
-
-        category = str(
-            data.get("category", "")
-        ).strip()
-
-        description = str(
-            data.get("description", "")
-        ).strip()
-
-        location = str(
-            data.get("location", "")
-        ).strip()
+        category = str(data.get("category", "")).strip()
+        description = str(data.get("description", "")).strip()
+        location = str(data.get("location", "")).strip()
 
         allowed_categories = {
             "Harassment",
@@ -1928,49 +1814,35 @@ def create_complaint():
         }
 
         if category not in allowed_categories:
-            return jsonify({
-                "success": False,
-                "message": "Select a valid complaint category."
-            }), 400
+            return jsonify({"success": False, "message": "Select a valid complaint category."}), 400
 
         if len(description) < 10:
-            return jsonify({
-                "success": False,
-                "message": (
-                    "Please describe the incident in more detail."
-                )
-            }), 400
+            return jsonify({"success": False, "message": "Please describe the incident in more detail."}), 400
 
-        uid = str(
-            decoded.get("uid") or ""
-        ).strip()
-
-        email = str(
-            decoded.get("email") or ""
-        ).strip().lower()
+        uid = str(decoded.get("uid") or "").strip()
+        email = str(decoded.get("email") or "").strip().lower()
 
         if not email:
             try:
                 user_record = auth.get_user(uid)
-                email = str(
-                    user_record.email or ""
-                ).strip().lower()
+                email = str(user_record.email or "").strip().lower()
             except Exception:
                 email = ""
 
         doc_ref = db.collection("complaints").document()
-
-        doc_ref.set({
-            "uid": uid,
-            "userEmail": email,
-            "category": category,
-            "description": description,
-            "location": location,
-            "status": "pending",
-            "adminResponse": "",
-            "createdAt": firestore.SERVER_TIMESTAMP,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-        })
+        doc_ref.set(
+            {
+                "uid": uid,
+                "userEmail": email,
+                "category": category,
+                "description": description,
+                "location": location,
+                "status": "pending",
+                "adminResponse": "",
+                "createdAt": firestore.SERVER_TIMESTAMP,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            }
+        )
 
         return jsonify({
             "success": True,
@@ -1991,43 +1863,25 @@ def create_complaint():
 def user_complaints():
     try:
         decoded, error_response = require_user_from_token()
-
         if error_response is not None:
             return error_response
 
-        uid = str(
-            decoded.get("uid") or ""
-        ).strip()
-
+        uid = str(decoded.get("uid") or "").strip()
         rows = []
-
-        for doc in (
-            db.collection("complaints")
-            .where("uid", "==", uid)
-            .stream()
-        ):
+        for doc in db.collection("complaints").where("uid", "==", uid).stream():
             item = serialize(doc.to_dict() or {})
             item["id"] = doc.id
-
+            # Never expose the internal email/uid back to the app UI.
             item.pop("uid", None)
             item.pop("userEmail", None)
-
             rows.append(item)
 
         rows.sort(
-            key=lambda x: str(
-                x.get("createdAt")
-                or x.get("updatedAt")
-                or ""
-            ),
+            key=lambda x: str(x.get("createdAt") or x.get("updatedAt") or ""),
             reverse=True,
         )
 
-        return jsonify({
-            "success": True,
-            "complaints": rows,
-            "total": len(rows)
-        })
+        return jsonify({"success": True, "complaints": rows, "total": len(rows)})
 
     except Exception as e:
         return jsonify({
@@ -2037,26 +1891,17 @@ def user_complaints():
         }), 500
 
 
+# Anonymous complaint endpoints: no login token required.
+# A random client key stored on the same device/browser is used only to
+# retrieve that user's own complaint history and admin responses.
 @app.post("/api/complaints/public")
 def create_public_complaint():
     try:
         data = request.get_json(silent=True) or {}
-
-        client_key = str(
-            data.get("clientKey", "")
-        ).strip()
-
-        category = str(
-            data.get("category", "")
-        ).strip()
-
-        description = str(
-            data.get("description", "")
-        ).strip()
-
-        location = str(
-            data.get("location", "")
-        ).strip()
+        client_key = str(data.get("clientKey", "")).strip()
+        category = str(data.get("category", "")).strip()
+        description = str(data.get("description", "")).strip()
+        location = str(data.get("location", "")).strip()
 
         allowed_categories = {
             "Harassment",
@@ -2068,27 +1913,13 @@ def create_public_complaint():
         }
 
         if len(client_key) < 20:
-            return jsonify({
-                "success": False,
-                "message": "Invalid report session."
-            }), 400
-
+            return jsonify({"success": False, "message": "Invalid report session."}), 400
         if category not in allowed_categories:
-            return jsonify({
-                "success": False,
-                "message": "Select a valid complaint category."
-            }), 400
-
+            return jsonify({"success": False, "message": "Select a valid complaint category."}), 400
         if len(description) < 10:
-            return jsonify({
-                "success": False,
-                "message": (
-                    "Please describe the incident in more detail."
-                )
-            }), 400
+            return jsonify({"success": False, "message": "Please describe the incident in more detail."}), 400
 
         doc_ref = db.collection("complaints").document()
-
         doc_ref.set({
             "clientKey": client_key,
             "category": category,
@@ -2118,42 +1949,22 @@ def create_public_complaint():
 @app.get("/api/complaints/public")
 def public_complaints():
     try:
-        client_key = str(
-            request.args.get("clientKey", "")
-        ).strip()
-
+        client_key = str(request.args.get("clientKey", "")).strip()
         if len(client_key) < 20:
-            return jsonify({
-                "success": False,
-                "message": "Invalid report session."
-            }), 400
+            return jsonify({"success": False, "message": "Invalid report session."}), 400
 
         rows = []
-
-        for doc in (
-            db.collection("complaints")
-            .where("clientKey", "==", client_key)
-            .stream()
-        ):
+        for doc in db.collection("complaints").where("clientKey", "==", client_key).stream():
             item = serialize(doc.to_dict() or {})
             item["id"] = doc.id
             item.pop("clientKey", None)
             rows.append(item)
 
         rows.sort(
-            key=lambda x: str(
-                x.get("createdAt")
-                or x.get("updatedAt")
-                or ""
-            ),
+            key=lambda x: str(x.get("createdAt") or x.get("updatedAt") or ""),
             reverse=True,
         )
-
-        return jsonify({
-            "success": True,
-            "complaints": rows,
-            "total": len(rows)
-        })
+        return jsonify({"success": True, "complaints": rows, "total": len(rows)})
 
     except Exception as e:
         return jsonify({
@@ -2177,34 +1988,32 @@ def admin_complaints():
             + counts.get("open", 0)
         )
 
-        return jsonify({
-            "success": True,
-            "complaints": rows,
-            "total": len(rows),
-            "resolved": resolved,
-            "pending": pending,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "complaints": rows,
+                "total": len(rows),
+                "resolved": resolved,
+                "pending": pending,
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to load complaints.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to load complaints.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.patch("/api/admin/complaints/<doc_id>/status")
 def admin_complaint_status(doc_id):
     try:
         data = request.get_json(silent=True) or {}
-
-        status = str(
-            data.get("status", "")
-        ).strip().lower()
-
-        admin_response = str(
-            data.get("adminResponse", "")
-        ).strip()
+        status = str(data.get("status", "")).strip().lower()
+        admin_response = str(data.get("adminResponse", "")).strip()
 
         if status not in {
             "pending",
@@ -2220,26 +2029,15 @@ def admin_complaint_status(doc_id):
         if status == "resolved" and len(admin_response) < 3:
             return jsonify({
                 "success": False,
-                "message": (
-                    "Please enter the response sent to the user "
-                    "before resolving."
-                ),
+                "message": "Please enter the response sent to the user before resolving.",
             }), 400
 
-        complaint_ref = db.collection(
-            "complaints"
-        ).document(doc_id)
-
+        complaint_ref = db.collection("complaints").document(doc_id)
         snap = complaint_ref.get()
-
         if not snap.exists:
-            return jsonify({
-                "success": False,
-                "message": "Complaint not found."
-            }), 404
+            return jsonify({"success": False, "message": "Complaint not found."}), 404
 
         existing = snap.to_dict() or {}
-
         payload = {
             "status": status,
             "updatedAt": firestore.SERVER_TIMESTAMP,
@@ -2252,22 +2050,11 @@ def admin_complaint_status(doc_id):
         if status == "resolved":
             payload["resolvedAt"] = firestore.SERVER_TIMESTAMP
 
-        complaint_ref.set(
-            payload,
-            merge=True,
-        )
+        complaint_ref.set(payload, merge=True)
 
         email_sent = False
-
-        user_email = str(
-            existing.get("userEmail") or ""
-        ).strip().lower()
-
-        if (
-            status == "resolved"
-            and user_email
-            and admin_response
-        ):
+        user_email = str(existing.get("userEmail") or "").strip().lower()
+        if status == "resolved" and user_email and admin_response:
             email_sent = send_brevo_email(
                 user_email,
                 "WS App User",
@@ -2304,43 +2091,47 @@ def admin_chat():
         today_prefix = now_utc().date().isoformat()
 
         today = sum(
-            str(
-                x.get("createdAt") or ""
-            ).startswith(today_prefix)
+            str(x.get("createdAt") or "").startswith(today_prefix)
             for x in rows
         )
 
-        return jsonify({
-            "success": True,
-            "sessions": rows,
-            "total": len(rows),
-            "today": today,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "sessions": rows,
+                "total": len(rows),
+                "today": today,
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to load chat sessions.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to load chat sessions.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.get("/api/admin/announcements")
 def admin_announcements():
     try:
-        return jsonify({
-            "success": True,
-            "announcements": collection_records(
-                "announcements"
-            ),
-        })
+        return jsonify(
+            {
+                "success": True,
+                "announcements": collection_records("announcements"),
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to load announcements.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to load announcements.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.post("/api/admin/announcements")
@@ -2348,64 +2139,62 @@ def create_announcement():
     try:
         data = request.get_json(silent=True) or {}
 
-        title = str(
-            data.get("title", "")
-        ).strip()
-
-        description = str(
-            data.get("description", "")
-        ).strip()
+        title = str(data.get("title", "")).strip()
+        description = str(data.get("description", "")).strip()
 
         if not title or not description:
-            return jsonify({
-                "success": False,
-                "message": "Title and description are required.",
-            }), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Title and description are required.",
+                }
+            ), 400
 
-        ref = db.collection(
-            "announcements"
-        ).document()
+        ref = db.collection("announcements").document()
 
-        ref.set({
-            "title": title,
-            "description": description,
-            "icon": str(data.get("icon", "📢")),
-            "date": data.get("date") or "",
-            "createdAt": firestore.SERVER_TIMESTAMP,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-            "active": True,
-        })
+        ref.set(
+            {
+                "title": title,
+                "description": description,
+                "icon": str(data.get("icon", "📢")),
+                "date": data.get("date") or "",
+                "createdAt": firestore.SERVER_TIMESTAMP,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+                "active": True,
+            }
+        )
 
-        return jsonify({
-            "success": True,
-            "id": ref.id,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "id": ref.id,
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to create announcement.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to create announcement.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.delete("/api/admin/announcements/<doc_id>")
 def delete_announcement(doc_id):
     try:
-        db.collection(
-            "announcements"
-        ).document(doc_id).delete()
-
-        return jsonify({
-            "success": True
-        })
+        db.collection("announcements").document(doc_id).delete()
+        return jsonify({"success": True})
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to delete announcement.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to delete announcement.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.get("/api/admin/helplines")
@@ -2420,17 +2209,21 @@ def admin_helplines():
             )
         )
 
-        return jsonify({
-            "success": True,
-            "helplines": rows,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "helplines": rows,
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to load helplines.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to load helplines.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.post("/api/admin/helplines")
@@ -2438,51 +2231,46 @@ def create_helpline():
     try:
         data = request.get_json(silent=True) or {}
 
-        name = str(
-            data.get("name", "")
-        ).strip()
-
-        number = str(
-            data.get("number", "")
-        ).strip()
+        name = str(data.get("name", "")).strip()
+        number = str(data.get("number", "")).strip()
 
         if not name or not number:
-            return jsonify({
-                "success": False,
-                "message": "Name and number are required.",
-            }), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Name and number are required.",
+                }
+            ), 400
 
-        ref = db.collection(
-            "helplines"
-        ).document()
+        ref = db.collection("helplines").document()
 
-        ref.set({
-            "name": name,
-            "number": number,
-            "category": str(
-                data.get("category", "Support")
-            ),
-            "icon": str(
-                data.get("icon", "📞")
-            ),
-            "active": bool(
-                data.get("active", True)
-            ),
-            "createdAt": firestore.SERVER_TIMESTAMP,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-        })
+        ref.set(
+            {
+                "name": name,
+                "number": number,
+                "category": str(data.get("category", "Support")),
+                "icon": str(data.get("icon", "📞")),
+                "active": bool(data.get("active", True)),
+                "createdAt": firestore.SERVER_TIMESTAMP,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            }
+        )
 
-        return jsonify({
-            "success": True,
-            "id": ref.id,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "id": ref.id,
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to create helpline.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to create helpline.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.patch("/api/admin/helplines/<doc_id>")
@@ -2504,23 +2292,21 @@ def update_helpline(doc_id):
 
         allowed["updatedAt"] = firestore.SERVER_TIMESTAMP
 
-        db.collection(
-            "helplines"
-        ).document(doc_id).set(
+        db.collection("helplines").document(doc_id).set(
             allowed,
             merge=True,
         )
 
-        return jsonify({
-            "success": True
-        })
+        return jsonify({"success": True})
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to update helpline.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to update helpline.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.get("/api/admin/settings")
@@ -2531,17 +2317,21 @@ def admin_settings():
         settings.pop("adminPassword", None)
         settings.pop("password", None)
 
-        return jsonify({
-            "success": True,
-            "settings": serialize(settings),
-        })
+        return jsonify(
+            {
+                "success": True,
+                "settings": serialize(settings),
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to load settings.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to load settings.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.put("/api/admin/settings")
@@ -2549,69 +2339,50 @@ def save_admin_settings():
     try:
         data = request.get_json(silent=True) or {}
 
-        settings_ref = db.collection(
-            "settings"
-        ).document("admin")
-
+        settings_ref = db.collection("settings").document("admin")
         settings = admin_settings_snapshot()
         admin_uid = settings.get("adminUid")
 
-        if (
-            not admin_uid
-            or request.admin_uid != admin_uid
-        ):
-            return jsonify({
-                "success": False,
-                "message": "Admin session is not authorized.",
-            }), 403
+        if not admin_uid or request.admin_uid != admin_uid:
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Admin session is not authorized.",
+                }
+            ), 403
 
         new_admin_id = str(
             data.get(
                 "adminId",
-                settings.get(
-                    "adminId",
-                    DEFAULT_ADMIN_ID
-                ),
+                settings.get("adminId", DEFAULT_ADMIN_ID),
             )
         ).strip()
 
         admin_name = str(
             data.get(
                 "adminName",
-                settings.get(
-                    "adminName",
-                    "Admin"
-                ),
+                settings.get("adminName", "Admin"),
             )
         ).strip()
 
         phone = str(
             data.get(
                 "phone",
-                settings.get(
-                    "phone",
-                    new_admin_id
-                ),
+                settings.get("phone", new_admin_id),
             )
         ).strip()
 
         new_email = str(
             data.get(
                 "email",
-                settings.get(
-                    "email",
-                    DEFAULT_ADMIN_EMAIL
-                ),
+                settings.get("email", DEFAULT_ADMIN_EMAIL),
             )
         ).strip().lower()
 
         app_version = str(
             data.get(
                 "appVersion",
-                settings.get(
-                    "appVersion",
-                    "v1.0.0"
-                ),
+                settings.get("appVersion", "v1.0.0"),
             )
         ).strip()
 
@@ -2628,55 +2399,47 @@ def save_admin_settings():
         )
 
         old_admin_id = str(
-            settings.get(
-                "adminId",
-                DEFAULT_ADMIN_ID
-            )
+            settings.get("adminId", DEFAULT_ADMIN_ID)
         ).strip()
 
         old_email = str(
-            settings.get(
-                "email",
-                DEFAULT_ADMIN_EMAIL
-            )
+            settings.get("email", DEFAULT_ADMIN_EMAIL)
         ).strip().lower()
 
         credential_change = (
-            new_admin_id != old_admin_id
-            or new_email != old_email
+            (new_admin_id != old_admin_id)
+            or (new_email != old_email)
             or bool(new_password)
         )
 
         if credential_change:
             if not current_password:
-                return jsonify({
-                    "success": False,
-                    "message": (
-                        "Enter the current password to "
-                        "change login credentials."
-                    ),
-                }), 400
+                return jsonify(
+                    {
+                        "success": False,
+                        "message": (
+                            "Enter the current password to change login credentials."
+                        ),
+                    }
+                ), 400
 
             if new_password and len(new_password) < 6:
-                return jsonify({
-                    "success": False,
-                    "message": (
-                        "New password must contain "
-                        "at least 6 characters."
-                    ),
-                }), 400
+                return jsonify(
+                    {
+                        "success": False,
+                        "message": "New password must contain at least 6 characters.",
+                    }
+                ), 400
 
-            if (
-                new_password
-                and new_password != confirm_password
-            ):
-                return jsonify({
-                    "success": False,
-                    "message": (
-                        "New password and confirm password "
-                        "do not match."
-                    ),
-                }), 400
+            if new_password and new_password != confirm_password:
+                return jsonify(
+                    {
+                        "success": False,
+                        "message": (
+                            "New password and confirm password do not match."
+                        ),
+                    }
+                ), 400
 
             code, result = firebase_password_signin(
                 old_email,
@@ -2684,10 +2447,12 @@ def save_admin_settings():
             )
 
             if code != 200:
-                return jsonify({
-                    "success": False,
-                    "message": "Current password is incorrect.",
-                }), 401
+                return jsonify(
+                    {
+                        "success": False,
+                        "message": "Current password is incorrect.",
+                    }
+                ), 401
 
         try:
             auth_update = {}
@@ -2710,60 +2475,61 @@ def save_admin_settings():
         except Exception as e:
             msg = str(e)
 
-            if (
-                "EMAIL_EXISTS" in msg
-                or "already exists" in msg.lower()
-            ):
-                return jsonify({
-                    "success": False,
-                    "message": (
-                        "That admin email is already in use."
-                    ),
-                }), 409
+            if "EMAIL_EXISTS" in msg or "already exists" in msg.lower():
+                return jsonify(
+                    {
+                        "success": False,
+                        "message": "That admin email is already in use.",
+                    }
+                ), 409
 
             raise
 
-        settings_ref.set({
-            "adminUid": admin_uid,
-            "adminId": new_admin_id,
-            "adminName": admin_name or "Admin",
-            "phone": phone,
-            "email": new_email,
-            "appVersion": app_version or "v1.0.0",
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-        }, merge=True)
+        settings_ref.set(
+            {
+                "adminUid": admin_uid,
+                "adminId": new_admin_id,
+                "adminName": admin_name or "Admin",
+                "phone": phone,
+                "email": new_email,
+                "appVersion": app_version or "v1.0.0",
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
 
-        return jsonify({
-            "success": True,
-            "message": (
-                "Admin account updated successfully. "
-                "Please sign in again."
-            ),
-        })
+        return jsonify(
+            {
+                "success": True,
+                "message": (
+                    "Admin account updated successfully. "
+                    "Please sign in again."
+                ),
+            }
+        )
 
     except requests.RequestException:
-        return jsonify({
-            "success": False,
-            "message": (
-                "Unable to reach Firebase login service."
-            ),
-        }), 503
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to reach Firebase login service.",
+            }
+        ), 503
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to save admin settings.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to save admin settings.",
+                "error": str(e),
+            }
+        ), 500
 
 
 @app.get("/api/admin/dashboard")
 def admin_dashboard():
     try:
-        users = list(
-            db.collection("users").stream()
-        )
-
+        users = list(db.collection("users").stream())
         sos = collection_records("sosAlerts")
         complaints = collection_records("complaints")
         chats = collection_records("chatSessions")
@@ -2771,26 +2537,14 @@ def admin_dashboard():
         total_users = len(users)
 
         active_sos = sum(
-            str(
-                x.get("status", "pending")
-            ).lower()
-            in {
-                "pending",
-                "active",
-                "critical",
-                "open"
-            }
+            str(x.get("status", "pending")).lower()
+            in {"pending", "active", "critical", "open"}
             for x in sos
         )
 
-        ccounts = status_counts(
-            complaints
-        )
+        ccounts = status_counts(complaints)
 
-        resolved = ccounts.get(
-            "resolved",
-            0
-        )
+        resolved = ccounts.get("resolved", 0)
 
         pending = (
             ccounts.get("pending", 0)
@@ -2802,104 +2556,94 @@ def admin_dashboard():
         today = now_utc().date()
 
         for delta in range(6, -1, -1):
-            day = today - timedelta(
-                days=delta
-            )
-
+            day = today - timedelta(days=delta)
             prefix = day.isoformat()
 
-            days.append({
-                "label": day.strftime("%a"),
-                "count": sum(
-                    str(
-                        x.get("createdAt") or ""
-                    ).startswith(prefix)
-                    for x in sos
-                ),
-            })
+            days.append(
+                {
+                    "label": day.strftime("%a"),
+                    "count": sum(
+                        str(x.get("createdAt") or "").startswith(prefix)
+                        for x in sos
+                    ),
+                }
+            )
 
         activity = []
 
-        for x in collection_records(
-            "users"
-        )[:5]:
-            activity.append({
-                "type": "user",
-                "title": x.get(
-                    "fullName"
-                ) or "User",
-                "message": "registered an account",
-                "createdAt": x.get("createdAt"),
-            })
+        for x in collection_records("users")[:5]:
+            activity.append(
+                {
+                    "type": "user",
+                    "title": x.get("fullName") or "User",
+                    "message": "registered an account",
+                    "createdAt": x.get("createdAt"),
+                }
+            )
 
         for x in sos[:5]:
-            activity.append({
-                "type": "sos",
-                "title": (
-                    x.get("fullName")
-                    or x.get("userName")
-                    or "User"
-                ),
-                "message": "triggered an SOS alert",
-                "createdAt": x.get("createdAt"),
-            })
+            activity.append(
+                {
+                    "type": "sos",
+                    "title": x.get("fullName") or x.get("userName") or "User",
+                    "message": "triggered an SOS alert",
+                    "createdAt": x.get("createdAt"),
+                }
+            )
 
         for x in complaints[:5]:
-            activity.append({
-                "type": "complaint",
-                "title": (
-                    x.get("fullName")
-                    or x.get("userName")
-                    or "User"
-                ),
-                "message": "submitted a complaint",
-                "createdAt": x.get("createdAt"),
-            })
+            activity.append(
+                {
+                    "type": "complaint",
+                    "title": x.get("fullName") or x.get("userName") or "User",
+                    "message": "submitted a complaint",
+                    "createdAt": x.get("createdAt"),
+                }
+            )
 
         for x in chats[:5]:
-            activity.append({
-                "type": "chat",
-                "title": (
-                    x.get("fullName")
-                    or x.get("userName")
-                    or "User"
-                ),
-                "message": (
-                    "started a support chat session"
-                ),
-                "createdAt": x.get("createdAt"),
-            })
+            activity.append(
+                {
+                    "type": "chat",
+                    "title": x.get("fullName") or x.get("userName") or "User",
+                    "message": "started a support chat session",
+                    "createdAt": x.get("createdAt"),
+                }
+            )
 
         activity.sort(
-            key=lambda x: str(
-                x.get("createdAt") or ""
-            ),
+            key=lambda x: str(x.get("createdAt") or ""),
             reverse=True,
         )
 
-        return jsonify({
-            "success": True,
-            "totalUsers": total_users,
-            "activeSos": active_sos,
-            "totalComplaints": len(complaints),
-            "resolvedComplaints": resolved,
-            "pendingComplaints": pending,
-            "chatSessions": len(chats),
-            "sosLast7Days": days,
-            "recentActivity": activity[:8],
-        })
+        return jsonify(
+            {
+                "success": True,
+                "totalUsers": total_users,
+                "activeSos": active_sos,
+                "totalComplaints": len(complaints),
+                "resolvedComplaints": resolved,
+                "pendingComplaints": pending,
+                "chatSessions": len(chats),
+                "sosLast7Days": days,
+                "recentActivity": activity[:8],
+            }
+        )
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to load dashboard.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to load dashboard.",
+                "error": str(e),
+            }
+        ), 500
 
 
-# ---------------- REAL SMS OTP ----------------
+# ---------------- REAL SMS OTP (MSG91 Widget) ----------------
 
 def normalize_phone(phone: str) -> str:
+    """Return a phone number in E.164 format for India when no country code is supplied."""
     value = str(phone or "").strip()
 
     value = (
@@ -2911,20 +2655,12 @@ def normalize_phone(phone: str) -> str:
 
     if value.startswith("00"):
         value = "+" + value[2:]
-
     elif value.startswith("+"):
         pass
-
     elif value.isdigit() and len(value) == 10:
         value = "+91" + value
-
-    elif (
-        value.startswith("0")
-        and value[1:].isdigit()
-        and len(value) == 11
-    ):
+    elif value.startswith("0") and value[1:].isdigit() and len(value) == 11:
         value = "+91" + value[1:]
-
     else:
         value = "+" + value
 
@@ -2932,14 +2668,13 @@ def normalize_phone(phone: str) -> str:
 
 
 def msg91_configured() -> bool:
-    return bool(
-        os.getenv("MSG91_AUTHKEY")
-    )
+    """Check that the server-side MSG91 AuthKey is available."""
+    return bool(os.getenv("MSG91_AUTHKEY"))
 
 
 def extract_verified_identifier(payload):
+    """Best-effort extraction of the identifier returned by MSG91 token verification."""
     if isinstance(payload, dict):
-
         for key in (
             "identifier",
             "mobile",
@@ -2949,26 +2684,18 @@ def extract_verified_identifier(payload):
         ):
             value = payload.get(key)
 
-            if (
-                isinstance(value, (str, int))
-                and str(value).strip()
-            ):
+            if isinstance(value, (str, int)) and str(value).strip():
                 return str(value).strip()
 
         for value in payload.values():
-            found = extract_verified_identifier(
-                value
-            )
+            found = extract_verified_identifier(value)
 
             if found:
                 return found
 
     elif isinstance(payload, list):
-
         for value in payload:
-            found = extract_verified_identifier(
-                value
-            )
+            found = extract_verified_identifier(value)
 
             if found:
                 return found
@@ -2976,22 +2703,17 @@ def extract_verified_identifier(payload):
     return ""
 
 
-def identifiers_match(
-    expected_phone: str,
-    verified_identifier: str
-) -> bool:
-
+def identifiers_match(expected_phone: str, verified_identifier: str) -> bool:
+    """Compare phone identifiers after normalization; True when MSG91 exposes no identifier."""
     if not verified_identifier:
         return True
 
     expected = "".join(
-        ch for ch in expected_phone
-        if ch.isdigit()
+        ch for ch in expected_phone if ch.isdigit()
     )
 
     actual = "".join(
-        ch for ch in verified_identifier
-        if ch.isdigit()
+        ch for ch in verified_identifier if ch.isdigit()
     )
 
     if len(actual) == 10:
@@ -3005,6 +2727,12 @@ def identifiers_match(
 
 @app.post("/api/otp/verify-access-token")
 def verify_msg91_access_token():
+    """
+    Verify the JWT/access-token produced by the MSG91 OTP Widget.
+
+    The MSG91 widget performs the actual OTP send/verify on the mobile client.
+    The server then verifies the returned access-token using the account/server AuthKey.
+    """
     try:
         data = request.get_json(silent=True) or {}
 
@@ -3014,45 +2742,39 @@ def verify_msg91_access_token():
             or ""
         ).strip()
 
-        phone = normalize_phone(
-            data.get("phone")
-        )
-
-        uid = str(
-            data.get("uid") or ""
-        ).strip()
+        phone = normalize_phone(data.get("phone"))
+        uid = str(data.get("uid") or "").strip()
 
         if not access_token:
-            return jsonify({
-                "success": False,
-                "message": (
-                    "MSG91 access token is required."
-                ),
-            }), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "MSG91 access token is required.",
+                }
+            ), 400
 
         if not phone or len(
-            "".join(
-                ch for ch in phone
-                if ch.isdigit()
-            )
+            "".join(ch for ch in phone if ch.isdigit())
         ) < 10:
-            return jsonify({
-                "success": False,
-                "message": "Enter a valid phone number.",
-            }), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Enter a valid phone number.",
+                }
+            ), 400
 
         if not msg91_configured():
-            return jsonify({
-                "success": False,
-                "message": (
-                    "MSG91 is not configured. "
-                    "Add MSG91_AUTHKEY to backend/.env."
-                ),
-            }), 503
+            return jsonify(
+                {
+                    "success": False,
+                    "message": (
+                        "MSG91 is not configured. "
+                        "Add MSG91_AUTHKEY to backend/.env."
+                    ),
+                }
+            ), 503
 
-        authkey = os.getenv(
-            "MSG91_AUTHKEY"
-        )
+        authkey = os.getenv("MSG91_AUTHKEY")
 
         response = requests.post(
             "https://control.msg91.com/api/v5/widget/verifyAccessToken",
@@ -3078,60 +2800,62 @@ def verify_msg91_access_token():
                 or "MSG91 access token verification failed."
             )
 
-            return jsonify({
-                "success": False,
-                "message": message,
-            }), response.status_code
+            return jsonify(
+                {
+                    "success": False,
+                    "message": message,
+                }
+            ), response.status_code
 
-        verified_identifier = (
-            extract_verified_identifier(
-                result
-            )
-        )
+        verified_identifier = extract_verified_identifier(result)
 
-        if not identifiers_match(
-            phone,
-            verified_identifier
-        ):
-            return jsonify({
-                "success": False,
-                "message": (
-                    "The verified phone number does not "
-                    "match the registered phone number."
-                ),
-            }), 400
+        if not identifiers_match(phone, verified_identifier):
+            return jsonify(
+                {
+                    "success": False,
+                    "message": (
+                        "The verified phone number does not match "
+                        "the registered phone number."
+                    ),
+                }
+            ), 400
 
         if uid:
-            db.collection(
-                "users"
-            ).document(uid).set({
-                "phoneVerified": True,
-                "phoneVerifiedAt": firestore.SERVER_TIMESTAMP,
-                "phone": phone,
-                "updatedAt": firestore.SERVER_TIMESTAMP,
-            }, merge=True)
+            db.collection("users").document(uid).set(
+                {
+                    "phoneVerified": True,
+                    "phoneVerifiedAt": firestore.SERVER_TIMESTAMP,
+                    "phone": phone,
+                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                },
+                merge=True,
+            )
 
-        return jsonify({
-            "success": True,
-            "verified": True,
-            "phone": phone,
-            "msg91": result,
-        }), 200
+        return jsonify(
+            {
+                "success": True,
+                "verified": True,
+                "phone": phone,
+                "msg91": result,
+            }
+        ), 200
 
     except requests.RequestException:
-        return jsonify({
-            "success": False,
-            "message": (
-                "Unable to reach MSG91 verification service."
-            ),
-        }), 503
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to reach MSG91 verification service.",
+            }
+        ), 503
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": "Unable to verify MSG91 OTP.",
-            "error": str(e),
-        }), 500
+        return jsonify(
+            {
+                "success": False,
+                "message": "Unable to verify MSG91 OTP.",
+                "error": str(e),
+            }
+        ), 500
 
 
 if __name__ == "__main__":

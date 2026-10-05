@@ -1,6 +1,6 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -34,80 +34,79 @@ export default function ContactsScreen() {
   const isMobile = width < 768;
 
   // Contacts are stored separately for each signed-in user.
-  // No demo/default contacts are preloaded.
-  const getCurrentUserKey = async () => {
+  // Native uses AsyncStorage; web uses localStorage.
+  const [storageKey, setStorageKey] = useState('wsapp_emergency_contacts_guest');
+  const [showForm, setShowForm] = useState(false);
+  const [newName,  setNewName]  = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newRel,   setNewRel]   = useState('');
+  const [contacts, setContacts] = useState<Contact[]>([]);
+
+  const getWebStorage = () => {
     try {
-      const raw = await AsyncStorage.getItem('wsUser');
-      if (!raw) return 'guest';
-      const parsed = JSON.parse(raw);
-      const id = parsed?.uid || parsed?.id || parsed?.email || parsed?.phone;
-      return id ? String(id).trim().toLowerCase() : 'guest';
-    } catch {
-      return 'guest';
-    }
+      return typeof globalThis !== 'undefined' ? (globalThis as any).localStorage : null;
+    } catch { return null; }
   };
 
-  const [storageKey, setStorageKey] = useState('wsapp_emergency_contacts_guest');
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newPhone, setNewPhone] = useState('');
-  const [newRel, setNewRel] = useState('');
+  const readUser = async () => {
+    try {
+      if (Platform.OS === 'web') {
+        const raw = getWebStorage()?.getItem?.('wsUser');
+        return raw ? JSON.parse(raw) : null;
+      }
+      const raw = await AsyncStorage.getItem('wsUser');
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  };
+
+  const readSavedContacts = async (key: string): Promise<Contact[]> => {
+    try {
+      const raw = Platform.OS === 'web'
+        ? getWebStorage()?.getItem?.(key)
+        : await AsyncStorage.getItem(key);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((c: any) => ({
+        id: Number(c.id) || Date.now(),
+        name: String(c.name || '').trim(),
+        phone: String(c.phone || '').trim(),
+        relation: String(c.relation || 'Contact').trim(),
+        initials: String(c.initials || getInitials(String(c.name || ''))),
+        color: String(c.color || COLORS[0]),
+        primary: Boolean(c.primary),
+      })).filter((c: Contact) => c.name && c.phone);
+    } catch { return []; }
+  };
 
   useEffect(() => {
     let active = true;
     (async () => {
-      const key = `wsapp_emergency_contacts_${await getCurrentUserKey()}`;
+      const user = await readUser();
+      const id = String(user?.uid || user?.id || user?.email || user?.phone || 'guest').trim().toLowerCase();
+      const key = `wsapp_emergency_contacts_${id}`;
+      const saved = await readSavedContacts(key);
       if (!active) return;
       setStorageKey(key);
-      try {
-        const raw = await AsyncStorage.getItem(key);
-        const parsed = raw ? JSON.parse(raw) : [];
-        if (active) setContacts(Array.isArray(parsed) ? parsed : []);
-      } catch {
-        if (active) setContacts([]);
-      }
+      setContacts(saved);
     })();
     return () => { active = false; };
   }, []);
 
-  // ✅ Fixed useRef
+  const saveContacts = async (next: Contact[]) => {
+    setContacts(next);
+    try {
+      const value = JSON.stringify(next);
+      if (Platform.OS === 'web') getWebStorage()?.setItem?.(storageKey, value);
+      else await AsyncStorage.setItem(storageKey, value);
+    } catch {}
+  };
+
   const phoneRef = useRef<TextInput>(null);
   const relRef   = useRef<TextInput>(null);
 
   const getInitials = (n: string) =>
     n.split(' ').map(x => x[0]).join('').toUpperCase().slice(0, 2) || '??';
-
-  const readSavedContacts = (): Contact[] => {
-    try {
-      const raw = getStorage()?.getItem?.(storageKey);
-      if (!raw) return [];
-
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-
-      return parsed
-        .map((c: any) => ({
-          id: Number(c.id) || Date.now(),
-          name: String(c.name || '').trim(),
-          phone: String(c.phone || '').trim(),
-          relation: String(c.relation || 'Contact').trim(),
-          initials: String(c.initials || getInitials(String(c.name || ''))),
-          color: String(c.color || COLORS[0]),
-          primary: Boolean(c.primary),
-        }))
-        .filter((c: Contact) => c.name && c.phone);
-    } catch {
-      return [];
-    }
-  };
-
-  const saveContacts = async (next: Contact[]) => {
-    setContacts(next);
-    try {
-      await AsyncStorage.setItem(storageKey, JSON.stringify(next));
-    } catch {}
-  };
 
   const setPrimary = (id: number) => {
     saveContacts(
@@ -146,36 +145,23 @@ export default function ContactsScreen() {
     setShowForm(false);
   };
 
-  const removeContactNow = (id: number) => {
-    const removed = contacts.find(c => c.id === id);
-    const next = contacts.filter(c => c.id !== id);
-
-    if (removed?.primary && next.length > 0 && !next.some(c => c.primary)) {
-      next[0] = { ...next[0], primary: true };
-    }
-
-    saveContacts(next);
-  };
-
   const deleteContact = (id: number) => {
-    const contact = contacts.find(c => c.id === id);
-    if (!contact) return;
-
-    // React Native Web's Alert action buttons can be inconsistent across browsers.
-    // Use the browser confirmation dialog on web so Delete always executes.
-    if (Platform.OS === 'web') {
-      const confirmed =
-        typeof window !== 'undefined'
-          ? window.confirm(`Remove ${contact.name} from emergency contacts?`)
-          : true;
-
-      if (confirmed) removeContactNow(id);
-      return;
-    }
-
-    Alert.alert('Delete Contact', `Remove ${contact.name} from emergency contacts?`, [
+    Alert.alert('Delete Contact', 'Remove this emergency contact?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => removeContactNow(id) },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          const removed = contacts.find(c => c.id === id);
+          const next = contacts.filter(c => c.id !== id);
+
+          if (removed?.primary && next.length > 0 && !next.some(c => c.primary)) {
+            next[0] = { ...next[0], primary: true };
+          }
+
+          saveContacts(next);
+        },
+      },
     ]);
   };
 
@@ -193,7 +179,7 @@ export default function ContactsScreen() {
 
         {/* TOP BAR */}
         <View style={[styles.topBar, isMobile && styles.topBarMobile]}>
-          <TouchableOpacity onPress={() => router.replace('/' as any)}>
+          <TouchableOpacity onPress={() => router.back()}>
             <Text style={styles.backTxt}>← Home</Text>
           </TouchableOpacity>
           <Text style={styles.topTitle}>Emergency Contacts</Text>

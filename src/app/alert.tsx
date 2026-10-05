@@ -1,7 +1,8 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useFocusEffect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   BackHandler,
   Linking,
@@ -16,6 +17,26 @@ import {
 } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
 import * as Location from 'expo-location';
+
+const MSG91_MOBILE_WIDGET_ID = process.env.EXPO_PUBLIC_MSG91_WIDGET_ID || '';
+const MSG91_MOBILE_TOKEN_AUTH = process.env.EXPO_PUBLIC_MSG91_TOKEN_AUTH || '';
+const MSG91_WEB_WIDGET_ID = process.env.EXPO_PUBLIC_MSG91_WEB_WIDGET_ID || '';
+const MSG91_WEB_TOKEN_AUTH = process.env.EXPO_PUBLIC_MSG91_WEB_TOKEN_AUTH || '';
+
+type WebOtpApi = {
+  sendOtp: (identifier: string, success?: (data: any) => void, failure?: (error: any) => void) => void;
+  retryOtp: (channel: string | null, success?: (data: any) => void, failure?: (error: any) => void, reqId?: string) => void;
+  verifyOtp: (otp: string, success?: (data: any) => void, failure?: (error: any) => void, reqId?: string) => void;
+};
+
+declare global {
+  interface Window {
+    sendOtp?: WebOtpApi['sendOtp'];
+    retryOtp?: WebOtpApi['retryOtp'];
+    verifyOtp?: WebOtpApi['verifyOtp'];
+    initSendOTP?: (configuration: any) => void;
+  }
+}
 
 
 export default function AlertScreen() {
@@ -32,6 +53,9 @@ export default function AlertScreen() {
   const policeTimerRef = useRef<any>(null);
   const alertIdRef = useRef<string | null>(null);
   const createdRef = useRef(false);
+  const contactsNotifiedRef = useRef(false);
+  const stopOtpSentRef = useRef(false);
+  const stopOtpReqIdRef = useRef('');
 
   const inputs    = [useRef<TextInput>(null), useRef<TextInput>(null), useRef<TextInput>(null), useRef<TextInput>(null)];
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -55,14 +79,115 @@ export default function AlertScreen() {
   const getStoredUser = async () => {
     try {
       const raw = await AsyncStorage.getItem('wsUser');
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return null;
   };
 
   const getStoredToken = async () => {
     try {
       return await AsyncStorage.getItem('wsToken');
     } catch { return null; }
+  };
+
+  const getContactsForUser = async (uid: string) => {
+    if (!uid) return [];
+    try {
+      const raw = await AsyncStorage.getItem(`wsapp_emergency_contacts_${uid.trim().toLowerCase()}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((c: any) => c?.phone) : [];
+    } catch { return []; }
+  };
+
+  const getWebIdentifier = (phone: string) => {
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (digits.length === 10) return `91${digits}`;
+    return digits;
+  };
+
+  const loadWebOtpSdk = async () => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
+    if (!MSG91_WEB_WIDGET_ID || !MSG91_WEB_TOKEN_AUTH) return false;
+    if (window.sendOtp && window.verifyOtp && window.retryOtp) return true;
+    await new Promise<void>((resolve, reject) => {
+      const existing = document.getElementById('msg91-otp-sdk');
+      if (existing) {
+        const timer = window.setInterval(() => {
+          if (window.sendOtp && window.verifyOtp && window.retryOtp) {
+            window.clearInterval(timer); resolve();
+          }
+        }, 100);
+        window.setTimeout(() => { window.clearInterval(timer); reject(new Error('MSG91 OTP SDK unavailable')); }, 10000);
+        return;
+      }
+      const script = document.createElement('script');
+      script.id = 'msg91-otp-sdk';
+      script.src = 'https://verify.msg91.com/otp-provider.js';
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Unable to load MSG91 OTP SDK'));
+      document.head.appendChild(script);
+    });
+    window.initSendOTP?.({
+      widgetId: MSG91_WEB_WIDGET_ID,
+      tokenAuth: MSG91_WEB_TOKEN_AUTH,
+      exposeMethods: true,
+      identifier: '',
+      success: (data: any) => data,
+      failure: (error: any) => error,
+    });
+    return !!(window.sendOtp && window.verifyOtp && window.retryOtp);
+  };
+
+  const sendStopOtp = async (phone: string) => {
+    if (stopOtpSentRef.current || !phone) return;
+    stopOtpSentRef.current = true;
+    try {
+      const identifier = getWebIdentifier(phone);
+      if (Platform.OS === 'web') {
+        const ready = await loadWebOtpSdk();
+        if (!ready || !window.sendOtp) throw new Error('MSG91 Web OTP is unavailable');
+        await new Promise<void>((resolve, reject) => {
+          window.sendOtp!(identifier, (data: any) => {
+            stopOtpReqIdRef.current = String(data?.reqId ?? data?.reqID ?? data?.requestId ?? '');
+            resolve();
+          }, (error: any) => reject(new Error(error?.message || 'Unable to send safety OTP')));
+        });
+        return;
+      }
+      if (!MSG91_MOBILE_WIDGET_ID || !MSG91_MOBILE_TOKEN_AUTH) throw new Error('MSG91 mobile OTP is not configured');
+      const mod = await import('@msg91comm/sendotp-react-native');
+      const OTPWidget = mod.OTPWidget;
+      await OTPWidget.initializeWidget(MSG91_MOBILE_WIDGET_ID, MSG91_MOBILE_TOKEN_AUTH);
+      const response = await OTPWidget.sendOTP({ identifier });
+      stopOtpReqIdRef.current = String(response?.reqId ?? response?.reqID ?? response?.requestId ?? '');
+      if (!stopOtpReqIdRef.current) throw new Error(response?.message || 'MSG91 did not return a request ID');
+    } catch (e) {
+      stopOtpSentRef.current = false;
+      console.warn('Stop Alert OTP send failed:', e);
+    }
+  };
+
+  const notifyEmergencyContacts = async (user: any, latitude: number, longitude: number) => {
+    if (contactsNotifiedRef.current || !user?.uid) return;
+    contactsNotifiedRef.current = true;
+    try {
+      const contacts = await getContactsForUser(String(user.uid));
+      if (!contacts.length) { contactsNotifiedRef.current = false; return; }
+      const token = await getStoredToken();
+      const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${API_URL}/api/sos/notify-contacts`, {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          uid: user.uid,
+          fullName: user.fullName || user.name || 'WS App User',
+          latitude, longitude,
+          contacts,
+        }),
+      });
+      if (!res.ok) contactsNotifiedRef.current = false;
+    } catch { contactsNotifiedRef.current = false; }
   };
 
   const updateRealSosLocation = async (coords: { latitude: number; longitude: number; accuracy?: number | null; policeStation?: string; policeAddress?: string; policeDistanceKm?: number | null }) => {
@@ -139,6 +264,10 @@ export default function AlertScreen() {
     const acc = typeof accuracy === 'number' ? accuracy : null;
     setLocation({ latitude, longitude, accuracy: acc, text: acc != null ? 'Live GPS location' : 'Live GPS location' });
     updateRealSosLocation({ latitude, longitude, accuracy: acc });
+    void (async () => {
+      const user = await getStoredUser();
+      await notifyEmergencyContacts(user, latitude, longitude);
+    })();
     if (policeTimerRef.current) clearTimeout(policeTimerRef.current);
     policeTimerRef.current = setTimeout(() => loadNearestPolice(latitude, longitude), 150);
   };
@@ -203,6 +332,7 @@ export default function AlertScreen() {
         setSosSaved(true);
         // IMPORTANT: create the Firestore SOS document first, then attach live GPS.
         await getLiveLocation();
+        await sendStopOtp(String(user?.phone || ''));
       } else {
         createdRef.current = false;
         console.warn('SOS create failed:', data?.message || 'Unknown error');
@@ -262,18 +392,51 @@ export default function AlertScreen() {
   };
 
   const markSafe = async () => {
-    Vibration.cancel();
+    const user = (await getStoredUser()) || {};
+    const phone = String(user?.phone || '');
+    const code = otp.join('');
+    if (code.length !== 4) {
+      const msg = 'Enter the 4-digit safety OTP sent to your registered number.';
+      if (Platform.OS === 'web') window.alert(msg); else Alert.alert('OTP Required', msg);
+      return;
+    }
+
     try {
+      let response: any;
+      if (Platform.OS === 'web') {
+        const ready = await loadWebOtpSdk();
+        if (!ready || !window.verifyOtp) throw new Error('MSG91 Web OTP is unavailable');
+        response = await new Promise<any>((resolve, reject) => {
+          window.verifyOtp!(code, (data: any) => resolve(data), (error: any) => reject(new Error(error?.message || 'Invalid OTP')), stopOtpReqIdRef.current || undefined);
+        });
+      } else {
+        const mod = await import('@msg91comm/sendotp-react-native');
+        response = await mod.OTPWidget.verifyOTP({ reqId: stopOtpReqIdRef.current, otp: code });
+      }
+      const accessToken = String(response?.message ?? response?.accessToken ?? response?.['access-token'] ?? response?.token ?? '').trim();
+      if (!accessToken) throw new Error(response?.message || 'Invalid OTP');
+
+      const verifyRes = await fetch(`${API_URL}/api/otp/verify-access-token`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessToken, phone, uid: user?.uid || '' }),
+      });
+      const verifyData = await verifyRes.json();
+      if (!verifyRes.ok || !verifyData?.success) throw new Error(verifyData?.message || 'OTP verification failed');
+
+      Vibration.cancel();
       if (alertIdRef.current) {
         await fetch(`${API_URL}/api/sos/${encodeURIComponent(alertIdRef.current)}/resolve`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         });
       }
-    } catch {}
-    setSafe(true);
-    Animated.timing(safeOpacity, { toValue: 1, duration: 500, useNativeDriver: true }).start();
-    setTimeout(() => router.replace('/' as any), 2500);
+      setSafe(true);
+      Animated.timing(safeOpacity, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+      setTimeout(() => router.replace('/' as any), 2500);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Invalid OTP. Alert is still active.';
+      if (Platform.OS === 'web') window.alert(msg); else Alert.alert('Invalid OTP', msg);
+      setOtp(['', '', '', '']);
+    }
   };
 
   // ── SAFE SCREEN ───────────────────────────
