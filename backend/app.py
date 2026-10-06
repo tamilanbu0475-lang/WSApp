@@ -444,6 +444,108 @@ def send_brevo_email(to_email, to_name, subject, text_content, html_content=None
         return False
 
 
+# ---------------- ADMIN EMAIL ALERTS ----------------
+import html as _html
+import threading
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _fmt_time(value):
+    try:
+        return value.astimezone(IST).strftime("%d %b %Y, %I:%M:%S %p IST")
+    except Exception:
+        return "-"
+
+
+def get_admin_alert_email():
+    # Optional override from Render env, else the email saved in Admin Settings.
+    return (
+        os.getenv("ADMIN_ALERT_EMAIL")
+        or admin_settings_snapshot().get("email")
+        or ""
+    ).strip().lower()
+
+
+def send_admin_email(subject, rows, headline, color="#5C0A2D", link=None, link_text=None):
+    """Send an alert mail to the admin in a background thread (never slows the API)."""
+
+    def _send():
+        try:
+            to_email = get_admin_alert_email()
+            if not to_email:
+                return
+
+            body_rows = "".join(
+                "<tr><td style='padding:6px 12px;color:#666'>%s</td>"
+                "<td style='padding:6px 12px;font-weight:bold'>%s</td></tr>"
+                % (_html.escape(str(k)), _html.escape(str(v if v not in (None, "") else "-")))
+                for k, v in rows
+            )
+            button = ""
+            if link:
+                button = (
+                    "<p><a href='%s' style='background:%s;color:#fff;padding:10px 18px;"
+                    "border-radius:6px;text-decoration:none'>%s</a></p>"
+                    % (_html.escape(link, quote=True), color, _html.escape(link_text or "Open")))
+
+            html_body = (
+                "<div style='font-family:Arial,sans-serif;max-width:520px'>"
+                "<h2 style='color:%s'>%s</h2><table>%s</table>%s"
+                "<p style='color:#999;font-size:12px'>WS App automatic admin alert</p></div>"
+                % (color, _html.escape(headline), body_rows, button)
+            )
+            text_body = headline + "\n" + "\n".join("%s: %s" % (k, v) for k, v in rows)
+            if link:
+                text_body += "\n" + link
+
+            send_brevo_email(to_email, "WS App Admin", subject, text_body, html_body)
+        except Exception as e:
+            print("Admin email failed:", e)
+
+    threading.Thread(target=_send, daemon=True).start()
+
+
+def notify_admin_sos(doc_id, event, resolved_by=""):
+    """event = 'started' or 'resolved'. Reads the SOS record and mails the admin."""
+
+    def _work():
+        try:
+            snap = db.collection("sosAlerts").document(doc_id).get()
+            d = snap.to_dict() or {}
+            lat, lon = d.get("latitude"), d.get("longitude")
+            maps = (
+                "https://www.google.com/maps/search/?api=1&query=%s,%s" % (lat, lon)
+                if lat is not None and lon is not None
+                else None
+            )
+            rows = [
+                ("User", d.get("fullName")),
+                ("Phone", d.get("phone")),
+                ("Email", d.get("email")),
+                ("Address", d.get("address")),
+                ("Nearest police", d.get("policeStation")),
+                ("Police distance (km)", d.get("policeDistanceKm")),
+                ("SOS started", _fmt_time(d.get("createdAt"))),
+            ]
+            if event == "started":
+                send_admin_email(
+                    "SOS ALERT STARTED - %s" % (d.get("fullName") or "User"),
+                    rows, "SOS ALERT STARTED", "#B00020", maps, "View live location")
+            else:
+                rows.append(("Resolved at", _fmt_time(d.get("resolvedAt"))))
+                if resolved_by:
+                    rows.append(("Resolved by", resolved_by))
+                send_admin_email(
+                    "SOS RESOLVED - %s" % (d.get("fullName") or "User"),
+                    rows, "SOS RESOLVED - user is safe", "#0B6E4F", maps, "Last known location")
+        except Exception as e:
+            print("notify_admin_sos failed:", e)
+
+    threading.Thread(target=_work, daemon=True).start()
+
+
+
 def send_verification_welcome_email(
     to_email: str,
     full_name: str,
@@ -607,6 +709,13 @@ def register():
                 pass
 
             raise
+
+        send_admin_email(
+            "New user registered - %s" % full_name,
+            [("Name", full_name), ("Phone", phone), ("Email", email),
+             ("Registered at", _fmt_time(datetime.now(timezone.utc)))],
+            "New user account created",
+        )
 
         return jsonify(
             {
@@ -1240,6 +1349,8 @@ def create_sos_alert():
             }
         )
 
+        notify_admin_sos(ref.id, "started")
+
         return jsonify(
             {
                 "success": True,
@@ -1318,6 +1429,8 @@ def resolve_user_sos(doc_id):
             },
             merge=True,
         )
+
+        notify_admin_sos(doc_id, "resolved", "User (safety code entered)")
 
         return jsonify(
             {
@@ -1944,6 +2057,9 @@ def admin_sos_status(doc_id):
             payload,
             merge=True,
         )
+
+        if status == "resolved":
+            notify_admin_sos(doc_id, "resolved", "Admin panel")
 
         return jsonify(
             {
