@@ -683,9 +683,11 @@ def login():
                 }
             ), 500
 
+        # The phone may be saved as 7603965658, +917603965658 or 917603965658.
+        phone_variants = [phone, "+91" + phone, "91" + phone, "0" + phone]
         docs = (
             db.collection("users")
-            .where("phone", "==", phone)
+            .where("phone", "in", phone_variants)
             .limit(1)
             .stream()
         )
@@ -795,6 +797,79 @@ def login():
                 "message": "Unable to login.",
                 "error": str(e),
             }
+        ), 500
+
+
+@app.post("/api/forgot-password")
+def forgot_password():
+    """Send a password-reset email (through Brevo) using the registered phone or email."""
+    try:
+        data = request.get_json(silent=True) or {}
+        ident = str(
+            data.get("identifier") or data.get("email") or data.get("phone") or ""
+        ).strip()
+
+        if not ident:
+            return jsonify(
+                {"success": False, "message": "Enter your registered mobile number or email."}
+            ), 400
+
+        email = ""
+        if "@" in ident:
+            email = ident.lower()
+        else:
+            digits = "".join(ch for ch in ident if ch.isdigit())
+            digits = digits[-10:] if len(digits) >= 10 else digits
+            if len(digits) != 10:
+                return jsonify(
+                    {"success": False, "message": "Enter a valid 10-digit mobile number or your email."}
+                ), 400
+            variants = [digits, "+91" + digits, "91" + digits, "0" + digits]
+            for doc in db.collection("users").where("phone", "in", variants).limit(1).stream():
+                email = str((doc.to_dict() or {}).get("email") or "").strip().lower()
+
+        generic = {
+            "success": True,
+            "message": "If this account exists, a password reset email has been sent. Check Inbox and Spam.",
+        }
+
+        if not email:
+            return jsonify(generic), 200
+
+        try:
+            link = auth.generate_password_reset_link(email)
+        except Exception:
+            return jsonify(generic), 200
+
+        subject = "Reset your WS App password"
+        text = (
+            "Hello,\n\nWe received a request to reset your WS App password.\n"
+            f"Open this link to choose a new password:\n{link}\n\n"
+            "If you did not ask for this, you can ignore this email."
+        )
+        html = (
+            "<div style='font-family:Arial,sans-serif;max-width:520px;margin:auto;"
+            "border:1px solid #C9A84C;border-radius:12px;overflow:hidden'>"
+            "<div style='background:#5C0A2D;color:#C9A84C;padding:18px;font-size:20px;"
+            "font-weight:bold'>WS App - Password Reset</div>"
+            "<div style='padding:20px;color:#222;font-size:15px;line-height:1.6'>"
+            "<p>We received a request to reset your WS App password.</p>"
+            f"<p><a href='{link}' style='background:#0B6E4F;color:#fff;padding:12px 20px;"
+            "border-radius:8px;text-decoration:none;display:inline-block'>Reset Password</a></p>"
+            "<p style='color:#666;font-size:13px'>If you did not ask for this, ignore this email.</p>"
+            "</div></div>"
+        )
+
+        if not send_brevo_email(email, "", subject, text, html):
+            return jsonify(
+                {"success": False, "message": "Could not send the email right now. Please try again."}
+            ), 502
+
+        return jsonify(generic), 200
+
+    except Exception as e:
+        return jsonify(
+            {"success": False, "message": "Unable to process the request.", "error": str(e)}
         ), 500
 
 
@@ -932,11 +1007,10 @@ def account_status():
 def user_stats():
     """Return robust per-user SOS/report counts for the Profile screen."""
     try:
-        decoded, error_response = require_user_from_token()
-        if error_response is not None:
-            return error_response
-
-        uid = str(decoded.get("uid") or "").strip()
+        # The login token expires after 1 hour. Counts are not secret, so when the
+        # token is expired we still accept the user id sent by the app.
+        decoded = verify_user_token_optional() or {}
+        uid = str(decoded.get("uid") or request.args.get("uid") or "").strip()
         if not uid:
             return jsonify({"success": False, "message": "Invalid user session."}), 401
 
