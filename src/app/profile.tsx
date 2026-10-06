@@ -1,9 +1,10 @@
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
-  Platform,
   Animated,
+  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -15,7 +16,7 @@ import {
 } from 'react-native';
 
 import ScreenBackground from '../components/ScreenBackground';
-import { loadSession, getUserStorage, getSessionToken, clearSession } from './session-storage';
+import { clearSession, getSessionToken, getUserStorage, loadSession } from './session-storage';
 
 export default function ProfileScreen() {
   const { width } = useWindowDimensions();
@@ -32,6 +33,65 @@ export default function ProfileScreen() {
   const [fullName, setFullName] = useState(String(params.fullName ?? '').trim());
   const [phone, setPhone] = useState(String(params.phone ?? '').trim());
   const [gmail, setGmail] = useState(String(params.email ?? '').trim().toLowerCase());
+
+  // Load SOS / report counts. Shows the last saved numbers at once, retries while the
+  // free Render server is waking up, and never overwrites good numbers with 0 on failure.
+  const loadStats = async (token: string, uid: string) => {
+    const cacheKey = `wsapp_stats_${uid.toLowerCase()}`;
+    try {
+      const cached = await AsyncStorage.getItem(cacheKey);
+      if (cached) {
+        const c = JSON.parse(cached);
+        setSosCount(Number(c.sosCount || 0));
+        setReportCount(Number(c.reportCount || 0));
+      }
+    } catch {}
+
+    const api = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 40000);
+      try {
+        const res = await fetch(`${api}/api/user/stats?uid=${encodeURIComponent(uid)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.success) {
+          const s = Number(data.sosCount || 0);
+          const r = Number(data.reportCount || 0);
+          setSosCount(s);
+          setReportCount(r);
+          try { await AsyncStorage.setItem(cacheKey, JSON.stringify({ sosCount: s, reportCount: r })); } catch {}
+          return;
+        }
+      } catch {
+        clearTimeout(timeoutId);
+      }
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      (async () => {
+        try {
+          const { user, token } = await loadSession();
+          const uid = String(user?.uid ?? user?.id ?? '').trim();
+          if (!alive || !token || !uid) return;
+          const rawContacts = await getUserStorage(`wsapp_emergency_contacts_${uid.toLowerCase()}`);
+          try {
+            const parsed = rawContacts ? JSON.parse(rawContacts) : [];
+            if (alive) setContactCount(Array.isArray(parsed) ? parsed.length : 0);
+          } catch {}
+          await loadStats(token, uid);
+        } catch {}
+      })();
+      return () => { alive = false; };
+    }, [])
+  );
 
   useEffect(() => {
     let alive = true;
@@ -68,17 +128,7 @@ export default function ProfileScreen() {
           }
         }
 
-        try {
-          const api = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
-          const res = await fetch(`${api}/api/user/stats`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          const data = await res.json().catch(() => null);
-          if (alive && res.ok && data?.success) {
-            setSosCount(Number(data.sosCount || 0));
-            setReportCount(Number(data.reportCount || 0));
-          }
-        } catch {}
+        // Counts are loaded in useFocusEffect below (every time this screen opens).
 
       } catch {
         router.replace('/login' as any);

@@ -39,6 +39,24 @@ export default function LoginScreen() {
   const BACKEND_URL =
     process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
 
+  // The free Render server can take up to a minute to wake up, so wait for it.
+  const fetchWithTimeout = async (url: string, options: any, ms = 60000) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), ms);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+
+  const friendlyError = (err: any) => {
+    const msg = err instanceof Error ? err.message : '';
+    if (err?.name === 'AbortError') return 'The server is waking up. Please wait a few seconds and try again.';
+    if (/network request failed|failed to fetch/i.test(msg)) return 'Cannot reach the server. Check your internet connection and try again.';
+    return msg || 'Unable to connect to the backend server.';
+  };
+
   const handleLogin = async () => {
     if (loading) return;
 
@@ -78,7 +96,7 @@ export default function LoginScreen() {
     ]).start();
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/login`, {
+      const response = await fetchWithTimeout(`${BACKEND_URL}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -128,11 +146,7 @@ export default function LoginScreen() {
       });
     } catch (error) {
       setLoading(false);
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to connect to the backend server.'
-      );
+      setError(friendlyError(error));
     }
   };
 
@@ -148,13 +162,17 @@ export default function LoginScreen() {
       setForgotLoading(true);
       setForgotMessage('');
 
-      const response = await fetch(`${BACKEND_URL}/api/forgot-password`, {
+      const response = await fetchWithTimeout(`${BACKEND_URL}/api/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: normalizedPhone }),
       });
 
       const result = await response.json().catch(() => null);
+
+      if (response.status === 404) {
+        throw new Error('Password reset is not available on the server yet. Please try again in a few minutes.');
+      }
 
       if (!response.ok || !result?.success) {
         throw new Error(result?.message || 'Unable to process password reset.');
@@ -165,11 +183,7 @@ export default function LoginScreen() {
       );
       setForgotPhone('');
     } catch (err) {
-      setForgotMessage(
-        err instanceof Error
-          ? err.message
-          : 'Unable to connect to the password recovery service.'
-      );
+      setForgotMessage(friendlyError(err));
     } finally {
       setForgotLoading(false);
     }

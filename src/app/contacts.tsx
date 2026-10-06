@@ -1,5 +1,5 @@
-import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -119,11 +119,11 @@ export default function ContactsScreen() {
 
   const addContact = () => {
     if (!newName.trim() || !newPhone.trim()) {
-      Alert.alert('Missing Info', 'Please enter name and phone number');
+      showMsg('Missing Info', 'Please enter name and phone number');
       return;
     }
     if (contacts.length >= 5) {
-      Alert.alert('Limit Reached', 'Maximum 5 emergency contacts allowed');
+      showMsg('Limit Reached', 'Maximum 5 emergency contacts allowed');
       return;
     }
     const c: Contact = {
@@ -145,24 +145,32 @@ export default function ContactsScreen() {
     setShowForm(false);
   };
 
+  const doDelete = (id: number) => {
+    const removed = contacts.find(c => c.id === id);
+    const next = contacts.filter(c => c.id !== id);
+
+    if (removed?.primary && next.length > 0 && !next.some(c => c.primary)) {
+      next[0] = { ...next[0], primary: true };
+    }
+
+    saveContacts(next);
+  };
+
+  // Alert.alert with buttons does nothing on Expo web, so web uses window.confirm.
   const deleteContact = (id: number) => {
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm('Delete this emergency contact?')) doDelete(id);
+      return;
+    }
     Alert.alert('Delete Contact', 'Remove this emergency contact?', [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          const removed = contacts.find(c => c.id === id);
-          const next = contacts.filter(c => c.id !== id);
-
-          if (removed?.primary && next.length > 0 && !next.some(c => c.primary)) {
-            next[0] = { ...next[0], primary: true };
-          }
-
-          saveContacts(next);
-        },
-      },
+      { text: 'Delete', style: 'destructive', onPress: () => doDelete(id) },
     ]);
+  };
+
+  const showMsg = (title: string, msg: string) => {
+    if (Platform.OS === 'web') { if (typeof window !== 'undefined') window.alert(msg); }
+    else Alert.alert(title, msg);
   };
 
   return (
@@ -447,4 +455,3 @@ const styles = StyleSheet.create({
     zIndex: 0,
   },
 });
-
