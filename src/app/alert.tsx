@@ -36,7 +36,7 @@ export default function AlertScreen() {
   const alertIdRef = useRef<string | null>(null);
   const createdRef = useRef(false);
   const contactsNotifiedRef = useRef(false);
-  const GOOD_ACCURACY_METERS = 200;          // precise GPS fix
+  const GOOD_ACCURACY_METERS = 50;           // precise GPS fix (send alert only with this, or after the wait below)
   const MAX_USABLE_ACCURACY_METERS = 20000;  // ignore only completely useless fixes
   const lastFixRef = useRef<{ latitude: number; longitude: number; accuracy: number | null } | null>(null);
   const policeRef = useRef<any>(null);
@@ -298,11 +298,12 @@ export default function AlertScreen() {
     const acc = typeof accuracy === 'number' && Number.isFinite(accuracy) ? accuracy : null;
 
     // A coarse network fix (e.g. +-50000 m) must never replace a good GPS fix.
+    // Also keep the better fix: a clearly worse reading must not replace it within 10 s.
     const prevFix = lastFixRef.current;
     if (
       prevFix && prevFix.accuracy != null &&
-      (acc == null || acc > Math.max(prevFix.accuracy * 4, 300)) &&
-      Date.now() - lastFixAtRef.current < 30000
+      (acc == null || acc > prevFix.accuracy * 1.5 + 10) &&
+      Date.now() - lastFixAtRef.current < 10000
     ) return;
 
     if (acc != null && acc > MAX_USABLE_ACCURACY_METERS) {
@@ -399,18 +400,18 @@ export default function AlertScreen() {
 
       // 1) fast: a very recent known position
       try {
-        const known = await Location.getLastKnownPositionAsync({ maxAge: 120000 });
+        const known = await Location.getLastKnownPositionAsync({ maxAge: 10000, requiredAccuracy: 100 });
         if (known) applyLocation(known.coords.latitude, known.coords.longitude, known.coords.accuracy);
       } catch {}
 
       // 2) quick current fix
-      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest })
         .then(pos => applyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy))
         .catch(() => {});
 
       // 3) continuous live tracking until SAFE (no time limit)
       locationWatchRef.current = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 0 },
+        { accuracy: Location.Accuracy.Highest, timeInterval: 2000, distanceInterval: 0 },
         pos => applyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy)
       );
     } catch {
@@ -481,8 +482,8 @@ export default function AlertScreen() {
       }
     })();
 
-    // If GPS is slow or offline, still open the alert SMS after 10 seconds.
-    const autoTimer = setTimeout(() => { void autoOpenAlert(); }, 10000);
+    // Opens as soon as GPS is precise (<= 50 m); if GPS is slow or offline, still opens after 15 seconds with the best fix.
+    const autoTimer = setTimeout(() => { void autoOpenAlert(); }, 15000);
 
     // Timer
     const timer = setInterval(() => setElapsed(e => e + 1), 1000);
@@ -537,7 +538,7 @@ export default function AlertScreen() {
     }
     const f = lastFixRef.current;
     const link = f ? `https://www.google.com/maps?q=${f.latitude},${f.longitude}` : 'location not ready yet';
-    return `EMERGENCY! ${userNameRef.current} pressed the SOS button in WS App and may be in danger.\nHer latest location: ${link}\nPlease go to her now or call 112.\nAfter you find her, tell her this safety code: ${fallbackCodeRef.current}`;
+    return `🚨 EMERGENCY - ${userNameRef.current} needs help!\n${userNameRef.current} pressed the SOS button in WS App and may be in danger.\nHer latest location${f && f.accuracy != null ? ` (accuracy about ${Math.round(f.accuracy)} m)` : ''}: ${link}\nPlease go to her now or call 112.\nAfter you find her, tell her this safety code: ${fallbackCodeRef.current}`;
   };
 
   const sendToContact = (c: any, kind: 'alert' | 'safe', via: 'whatsapp' | 'sms') => {
@@ -551,12 +552,14 @@ export default function AlertScreen() {
     Linking.openURL(url).catch(() => showMsg('Could not open', 'Unable to open WhatsApp / SMS on this device.'));
   };
 
-  const sendSmsToAll = () => {
+  const sendSmsToAll = (kind: 'alert' | 'safe' = 'alert') => {
     const nums = contactsRef.current.map((c: any) => String(c?.phone || '').replace(/\D/g, '')).filter(Boolean);
     if (!nums.length) return;
-    sharedManuallyRef.current = true;
-    setShared(true);
-    const msg = buildMessage('alert');
+    if (kind === 'alert') {
+      sharedManuallyRef.current = true;
+      setShared(true);
+    }
+    const msg = buildMessage(kind);
     Linking.openURL(`sms:${nums.join(',')}${Platform.OS === 'ios' ? '&' : '?'}body=${encodeURIComponent(msg)}`)
       .catch(() => showMsg('Could not open', 'Unable to open SMS on this device.'));
   };
@@ -628,6 +631,14 @@ export default function AlertScreen() {
     stopLocationWatch();
     setSafe(true);
     Animated.timing(safeOpacity, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+
+    // After the alert is solved, open the SMS screen by itself with the "I am safe"
+    // message for ALL contacts (phone only; the user just presses Send).
+    if (Platform.OS !== 'web') {
+      setTimeout(() => {
+        if (contactsRef.current.length) sendSmsToAll('safe');
+      }, 900);
+    }
   };
 
   // ── SAFE SCREEN ───────────────────────────
@@ -650,6 +661,9 @@ export default function AlertScreen() {
           {contactList.length > 0 && (
             <View style={{ width: '100%', gap: 8 }}>
               <Text style={styles.safeRedirect}>Tell your contacts you are safe:</Text>
+              <TouchableOpacity style={styles.shareBtn} onPress={() => sendSmsToAll('safe')}>
+                <Text style={styles.shareBtnTxt}>📩  SMS to all contacts - "I am safe"</Text>
+              </TouchableOpacity>
               {contactList.map((c: any, i: number) => (
                 <TouchableOpacity key={i} style={styles.shareBtn} onPress={() => sendToContact(c, 'safe', 'whatsapp')}>
                   <Text style={styles.shareBtnTxt}>💬  {c.name || c.phone} - "I am safe"</Text>
@@ -791,7 +805,7 @@ export default function AlertScreen() {
             Tap to send your location and the safety code on WhatsApp or SMS. Your contact does not need the WS App. A phone cannot send these silently, so press Send in the message screen.
           </Text>
           {contactList.length > 1 && (
-            <TouchableOpacity style={[styles.shareBtn, { marginBottom: 12 }]} onPress={sendSmsToAll}>
+            <TouchableOpacity style={[styles.shareBtn, { marginBottom: 12 }]} onPress={() => sendSmsToAll('alert')}>
               <Text style={styles.shareBtnTxt}>✉️  SMS to ALL contacts</Text>
             </TouchableOpacity>
           )}

@@ -1,4 +1,5 @@
 import os
+import time
 import glob
 from datetime import datetime, timezone, timedelta
 
@@ -511,8 +512,14 @@ def notify_admin_sos(doc_id, event, resolved_by=""):
 
     def _work():
         try:
-            snap = db.collection("sosAlerts").document(doc_id).get()
-            d = snap.to_dict() or {}
+            # For a new SOS the first GPS fix is often rough: wait (max ~24 s) for a precise one.
+            d = {}
+            for _ in range(8 if event == "started" else 1):
+                d = db.collection("sosAlerts").document(doc_id).get().to_dict() or {}
+                acc = d.get("accuracy")
+                if event != "started" or (isinstance(acc, (int, float)) and acc <= 50):
+                    break
+                time.sleep(3)
             lat, lon = d.get("latitude"), d.get("longitude")
             maps = (
                 "https://www.google.com/maps/search/?api=1&query=%s,%s" % (lat, lon)
@@ -523,6 +530,7 @@ def notify_admin_sos(doc_id, event, resolved_by=""):
                 ("User", d.get("fullName")),
                 ("Phone", d.get("phone")),
                 ("Email", d.get("email")),
+                ("GPS accuracy (m)", round(d["accuracy"]) if isinstance(d.get("accuracy"), (int, float)) else "-"),
                 ("Address", d.get("address")),
                 ("Nearest police", d.get("policeStation")),
                 ("Police distance (km)", d.get("policeDistanceKm")),
