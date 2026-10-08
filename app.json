@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "WSApp",
+    "name": "WS App",
     "slug": "ws-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -15,9 +15,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#1A0310",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -37,9 +36,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#1A0310",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 220
         }
       ],
       [
@@ -47,7 +46,10 @@
         {
           "locationWhenInUsePermission": "WS App uses your location to share it with your emergency contacts and find the nearest police station when you press SOS."
         }
-      ]
+      ],
+      "expo-image",
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
   Animated,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -241,9 +242,11 @@ export default function LoginScreen() {
 
             {/* Logo */}
             <View style={styles.logoRow}>
-              <View style={styles.logoBox}>
-                <Text style={styles.logoTxt}>WS</Text>
-              </View>
+              <Image
+                source={require('../../assets/images/splash-icon.png')}
+                style={styles.logoImg}
+                resizeMode="contain"
+              />
 
               <View>
                 <Text style={styles.brandName}>WS App</Text>
@@ -565,6 +568,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     marginBottom: 32,
+  },
+
+  logoImg: {
+    width: 58,
+    height: 58,
   },
 
   logoBox: {

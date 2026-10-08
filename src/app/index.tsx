@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Linking, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { Animated, Image, Linking, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
 import { loadSession } from './session-storage';
 
@@ -118,9 +118,7 @@ export default function HomeScreen() {
       {/* TOP BAR */}
       <View style={[styles.topBar, isMobile && styles.topBarMobile]}>
         <View style={styles.topLeft}>
-          <View style={styles.logoBox}>
-            <Text style={styles.logoTxt}>WS</Text>
-          </View>
+          <Image source={require('../../assets/images/splash-icon.png')} style={{ width: 42, height: 42 }} resizeMode="contain" />
           <View>
             <Text style={styles.appName}>WS App</Text>
             <Text style={styles.appSub}>Women Safety</Text>
@@ -353,7 +351,7 @@ export default function HomeScreen() {
         <View style={styles.offlineCard}>
           <Text style={{ fontSize: 18 }}>📡</Text>
           <Text style={styles.offlineTxt}>
-            Works offline too — SMS alerts always available
+            GPS + SMS alerts work without internet
           </Text>
         </View>
 

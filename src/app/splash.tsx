@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { useEffect, useRef } from 'react';
 import {
   Animated,
+  Image,
   StatusBar,
   StyleSheet,
   Text,
@@ -48,13 +49,7 @@ export default function SplashScreen() {
       {/* Content */}
       <View style={styles.content}>
         <Animated.View style={[styles.logoWrap, { opacity: logoOpacity, transform: [{ scale: logoScale }] }]}>
-          <View style={styles.logoOuter}>
-            <View style={styles.logoMid}>
-              <View style={styles.logoCore}>
-                <Text style={styles.logoText}>WS</Text>
-              </View>
-            </View>
-          </View>
+          <Image source={require('../../assets/images/splash-icon.png')} style={{ width: 170, height: 170 }} resizeMode="contain" />
         </Animated.View>
         <Animated.View style={[styles.goldLine, { width: lineWidth }]} />
         <Animated.Text style={[styles.appName, { opacity: textOpacity }]}>WS App</Animated.Text>

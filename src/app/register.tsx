@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -328,11 +329,7 @@ function RegisterContent({
 
           {/* LOGO */}
           <View style={styles.logoRow}>
-            <View style={styles.logoBox}>
-              <Text style={styles.logoTxt}>
-                WS
-              </Text>
-            </View>
+            <Image source={require('../../assets/images/splash-icon.png')} style={{ width: 54, height: 54 }} resizeMode="contain" />
 
             <View>
               <Text style={styles.brandName}>
