@@ -1,8 +1,11 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Image, Linking, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { Animated, Image, Linking, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
 import { loadSession } from './session-storage';
+
+// Phone: every fresh app start shows the animated splash first (web already opens /splash).
+let splashShown = false;
 
 const HELPLINES = [
   { name: 'Women Helpline', number: '1091', icon: '👩', color: '#C9A84C' },
@@ -42,6 +45,11 @@ export default function HomeScreen() {
   });
 
   useEffect(() => {
+    if (Platform.OS !== 'web' && !splashShown) {
+      splashShown = true;
+      router.replace('/splash' as any);
+      return;
+    }
     let active = true;
     (async () => {
       try {
