@@ -1269,6 +1269,7 @@ Your job: calm, warm, practical support for women who feel unsafe, scared, haras
 Rules:
 - Reply in the same language the user writes: English, Tamil script, or Tamil written in English letters (Tanglish).
 - Keep replies short (max about 100 words), simple, kind. No long lectures.
+- Write plain text only: no markdown, no asterisks, no bold. For lists use numbers like "1." on new lines.
 - If there is IMMEDIATE danger (being followed, attacked, threatened, trapped): first tell her to press the red SOS button in WS App and call 112. Then give one or two short safety steps (move to a crowded, lit place, stay on the phone, tell a trusted person).
 - India helplines you may share: Emergency 112, Police 100, Women Helpline 1091, Women Helpline (Mahila) 181, Ambulance 108, Child Helpline 1098, Cyber Crime 1930, Tele-MANAS mental health 14416.
 - For online harassment or blackmail: advise saving screenshots, not deleting chats, reporting at cybercrime.gov.in or calling 1930.
@@ -1335,24 +1336,37 @@ def support_ai():
     payload = {
         "systemInstruction": {"parts": [{"text": AI_SYSTEM_PROMPT}]},
         "contents": contents,
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024},
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2048},
         "safetySettings": safety,
     }
 
+    url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % model
     try:
-        resp = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % model,
-            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-            json=payload,
-            timeout=25,
-        )
+        resp = None
+        for attempt in range(2):  # one retry for busy / rate-limited Gemini
+            resp = requests.post(
+                url,
+                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                json=payload,
+                timeout=22,
+            )
+            if resp.status_code in (429, 500, 502, 503, 504) and attempt == 0:
+                print("AI retry after status", resp.status_code)
+                time.sleep(2)
+                continue
+            break
+
         if resp.status_code != 200:
             print("AI error", resp.status_code, resp.text[:300])
             return jsonify({"success": False, "reply": AI_FALLBACK_REPLY, "message": "AI unavailable."}), 502
 
-        parts = (((resp.json().get("candidates") or [{}])[0]).get("content") or {}).get("parts") or []
-        reply = "".join(p.get("text", "") for p in parts).strip()
+        body = resp.json()
+        cand = (body.get("candidates") or [{}])[0]
+        parts = (cand.get("content") or {}).get("parts") or []
+        reply = "".join(p_.get("text", "") for p_ in parts).strip()
+        reply = reply.replace("**", "").replace("__", "")
         if not reply:
+            print("AI empty reply, finishReason:", cand.get("finishReason"), "feedback:", str(body.get("promptFeedback"))[:200])
             return jsonify({"success": True, "reply": AI_FALLBACK_REPLY})
         return jsonify({"success": True, "reply": reply})
     except Exception as e:

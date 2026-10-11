@@ -99,12 +99,16 @@ export default function SupportScreen() {
       });
       clearTimeout(timer);
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data?.reply) return String(data.reply);
-      if (data?.reply) return String(data.reply);
+      if (res.status === 401) {
+        return 'Your login session has expired. Please log out and log in again to use AI support. If you are in danger, press SOS or call 112.';
+      }
+      if (res.status === 429) return 'Please wait a minute before sending more messages.';
+      if (data?.reply) return String(data.reply).replace(/\*\*/g, '');
+      return getAiReply(userText) + ' (AI is not configured on the server)';
     } catch {
-      // offline / timeout -> fallback below
+      // offline / timeout -> built-in reply
     }
-    return getAiReply(userText);
+    return getAiReply(userText) + ' (offline reply - AI could not be reached)';
   };
 
   const sendMessage = async (text?: string, targetMode?: Mode) => {
