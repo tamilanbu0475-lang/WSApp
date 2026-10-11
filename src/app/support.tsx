@@ -14,6 +14,9 @@ import {
   View,
 } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
+import { loadSession } from './session-storage';
+
+const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
 
 type Mode = 'ai' | 'team';
 
@@ -40,7 +43,7 @@ function getAiReply(text: string) {
     return 'Police: 100   •   Women Helpline: 1091   •   Ambulance: 108';
   }
   if (t.includes('safety tip') || t.includes('safety tips')) {
-    return 'Keep emergency contacts updated, share your location only when needed, and keep the Police 100 and Women Helpline 109 numbers accessible.';
+    return 'Keep emergency contacts updated, share your location only when needed, and keep the Police 100 and Women Helpline 1091 numbers accessible.';
   }
   if (t.includes('unsafe') || t.includes('scared') || t.includes('danger') || t.includes('help')) {
     return 'Your safety comes first. Move to a public or trusted place and use the SOS button when you need emergency assistance.';
@@ -54,6 +57,7 @@ export default function SupportScreen() {
 
   const [mode, setMode] = useState<Mode>('ai');
   const [draft, setDraft] = useState('');
+  const [typing, setTyping] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 1,
@@ -74,29 +78,68 @@ export default function SupportScreen() {
     [mode]
   );
 
-  const sendMessage = (text?: string, targetMode?: Mode) => {
+  const scrollDown = () => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
+
+  // Real AI reply from the backend (key stays on the server). Falls back to the built-in reply if offline.
+  const askAi = async (history: Message[], userText: string): Promise<string> => {
+    try {
+      const { token } = await loadSession();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 45000);
+      const res = await fetch(`${API_URL}/api/support/ai`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          messages: history.map(m => ({ sender: m.sender, text: m.text })),
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.reply) return String(data.reply);
+      if (data?.reply) return String(data.reply);
+    } catch {
+      // offline / timeout -> fallback below
+    }
+    return getAiReply(userText);
+  };
+
+  const sendMessage = async (text?: string, targetMode?: Mode) => {
     const value = (text ?? draft).trim();
-    if (!value) return;
+    if (!value || typing) return;
 
     const currentMode = targetMode ?? mode;
     setMode(currentMode);
     const nextId = Date.now();
-
-    setMessages(prev => [
-      ...prev,
-      { id: nextId, sender: 'user', text: value },
-      {
-        id: nextId + 1,
-        sender: currentMode === 'ai' ? 'ai' : 'team',
-        text:
-          currentMode === 'ai'
-            ? getAiReply(value)
-            : 'Your message has been added to Team Support. A support member can continue the conversation here.',
-      },
-    ]);
+    const userMsg: Message = { id: nextId, sender: 'user', text: value };
     setDraft('');
 
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50);
+    if (currentMode === 'team') {
+      setMessages(prev => [
+        ...prev,
+        userMsg,
+        {
+          id: nextId + 1,
+          sender: 'team',
+          text: 'Your message has been added to Team Support. A support member can continue the conversation here.',
+        },
+      ]);
+      scrollDown();
+      return;
+    }
+
+    const history = [...messages, userMsg];
+    setMessages(history);
+    setTyping(true);
+    scrollDown();
+
+    const reply = await askAi(history, value);
+    setTyping(false);
+    setMessages(prev => [...prev, { id: Date.now() + 1, sender: 'ai', text: reply }]);
+    scrollDown();
   };
 
   const openHelpline = () => {
@@ -170,7 +213,7 @@ export default function SupportScreen() {
               <TouchableOpacity
                 key={item.label}
                 style={[styles.chip, item.mode === mode && styles.chipActive]}
-                onPress={() => sendMessage(item.text, item.mode)}
+                onPress={() => { void sendMessage(item.text, item.mode); }}
                 activeOpacity={0.8}
               >
                 <Text style={styles.chipText}>{item.label}</Text>
@@ -214,6 +257,17 @@ export default function SupportScreen() {
             </View>
           ))}
 
+          {typing && (
+            <View style={styles.messageRow}>
+              <View style={styles.senderBadge}>
+                <Text style={styles.senderBadgeText}>AI</Text>
+              </View>
+              <View style={styles.bubble}>
+                <Text style={styles.bubbleText}>Typing…</Text>
+              </View>
+            </View>
+          )}
+
           <View style={styles.helplineInfo}>
             <Text style={styles.helplineInfoIcon}>📞</Text>
             <View style={{ flex: 1 }}>
@@ -240,12 +294,13 @@ export default function SupportScreen() {
             onChangeText={setDraft}
             placeholder={mode === 'ai' ? 'Type your message here...' : 'Message Team Support...'}
             placeholderTextColor="rgba(255,255,255,0.28)"
-            onSubmitEditing={() => sendMessage()}
+            onSubmitEditing={() => { void sendMessage(); }}
+            editable={!typing}
             returnKeyType="send"
           />
           <TouchableOpacity
             style={styles.sendBtn}
-            onPress={() => sendMessage()}
+            onPress={() => { void sendMessage(); }}
             activeOpacity={0.82}
           >
             <Text style={styles.sendTxt}>➤</Text>
