@@ -71,6 +71,7 @@ export default function SupportScreen() {
   ]);
 
   const scrollRef = useRef<ScrollView>(null);
+  const sessionIdRef = useRef(`s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`);
 
   const headerText = useMemo(
     () => (mode === 'ai' ? 'AI Support' : 'Team Support'),
@@ -89,6 +90,7 @@ export default function SupportScreen() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            sessionId: sessionIdRef.current,
             messages: history.map(m => ({ sender: m.sender, text: m.text })),
           }),
         },

@@ -12,6 +12,13 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://wsapp-9w4r.onrender.com",
+        "EXPO_PUBLIC_MSG91_WIDGET_ID": "PASTE_FROM_YOUR_.env",
+        "EXPO_PUBLIC_MSG91_TOKEN_AUTH": "PASTE_FROM_YOUR_.env",
+        "EXPO_PUBLIC_MSG91_WEB_WIDGET_ID": "PASTE_FROM_YOUR_.env",
+        "EXPO_PUBLIC_MSG91_WEB_TOKEN_AUTH": "PASTE_FROM_YOUR_.env"
       }
     },
     "production": {

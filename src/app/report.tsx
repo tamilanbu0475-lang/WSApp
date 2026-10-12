@@ -14,7 +14,7 @@ import {
   View
 } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
-import { API_URL, getClientKey } from './session-storage';
+import { API_URL, authFetch, getClientKey, getSessionToken } from './session-storage';
 
 const CATEGORIES = ['Harassment', 'Stalking', 'Abuse', 'Threat', 'Cyber Crime', 'Other'];
 
@@ -89,17 +89,33 @@ export default function ReportScreen() {
 
   const loadReports = useCallback(async () => {
     const clientKey = await getClientKey();
-    if (!clientKey) {
-      setLoadingReports(false);
-      return;
-    }
+    const loggedIn = !!(await getSessionToken());
 
     try {
-      const res = await fetch(`${API_URL}/api/complaints/public?clientKey=${encodeURIComponent(clientKey)}`);
-      const data = await res.json();
-      if (res.ok && data?.success) {
-        setReports(Array.isArray(data.complaints) ? data.complaints : []);
+      let merged: Complaint[] = [];
+      // 1) Reports tied to the account: same on web and mobile.
+      if (loggedIn) {
+        try {
+          const r1 = await authFetch(`${API_URL}/api/complaints`, {}, 30000);
+          const d1 = await r1.json().catch(() => ({}));
+          if (r1.ok && d1?.success && Array.isArray(d1.complaints)) merged = d1.complaints;
+        } catch {}
       }
+      // 2) Old anonymous reports made earlier on this device.
+      if (clientKey) {
+        try {
+          const r2 = await fetch(`${API_URL}/api/complaints/public?clientKey=${encodeURIComponent(clientKey)}`);
+          const d2 = await r2.json().catch(() => ({}));
+          if (r2.ok && d2?.success && Array.isArray(d2.complaints)) {
+            const seen = new Set(merged.map((x: any) => x.id));
+            merged = [...merged, ...d2.complaints.filter((x: any) => !seen.has(x.id))];
+          }
+        } catch {}
+      }
+      merged.sort((a: any, b: any) =>
+        String(b.createdAt || b.updatedAt || '').localeCompare(String(a.createdAt || a.updatedAt || ''))
+      );
+      setReports(merged);
     } catch {
       // Keep existing UI state when offline/unavailable.
     } finally {
@@ -124,23 +140,28 @@ export default function ReportScreen() {
     }
 
     const clientKey = await getClientKey();
-    if (!clientKey) {
-      Alert.alert('Unable to Submit', 'Could not prepare your report. Please restart the app and try again.');
-      return;
-    }
+    const loggedIn = !!(await getSessionToken());
 
     setSubmitting(true);
     try {
-      const res = await fetchWithTimeout(`${API_URL}/api/complaints/public`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientKey,
-          category,
-          description: description.trim(),
-          location: location.trim(),
-        }),
-      });
+      const payload = {
+        category,
+        description: description.trim(),
+        location: location.trim(),
+      };
+      // Logged-in user -> report saved with the user's name/uid (shows on any device).
+      // Not logged in -> anonymous report.
+      let res = loggedIn
+        ? await authFetch(
+            `${API_URL}/api/complaints`,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
+            45000
+          )
+        : await fetchWithTimeout(`${API_URL}/api/complaints/public`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientKey, ...payload }),
+          });
 
       const data = await res.json();
       if (!res.ok || !data?.success) {

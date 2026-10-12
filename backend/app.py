@@ -1287,6 +1287,67 @@ AI_FALLBACK_REPLY = (
 
 _ai_hits = {}
 
+_CRISIS_WORDS = (
+    "suicide", "kill myself", "end my life", "want to die", "rape", "raped",
+    "abuse", "beating me", "he will kill", "help me", "in danger",
+    "saaga", "sagalam", "uyir", "kaapathunga", "kaapaathunga",
+)
+
+
+def save_chat_session(user, data, contents, reply):
+    """Save / update one AI chat session in Firestore so the admin Chat Monitor can show it."""
+    try:
+        uid = str((user or {}).get("uid") or "").strip()
+        if not uid:
+            return
+        raw_sid = re.sub(r"[^A-Za-z0-9_-]", "", str(data.get("sessionId") or ""))[:40]
+        sid = raw_sid or datetime.now(timezone.utc).strftime("%Y%m%d")
+        doc_id = "%s_%s" % (uid, sid)
+        ref = db.collection("chatSessions").document(doc_id)
+        snap = ref.get()
+
+        last_user = ""
+        for c in reversed(contents):
+            if c.get("role") == "user":
+                last_user = c["parts"][0]["text"][:1000]
+                break
+
+        entry_user = {"sender": "user", "text": last_user, "at": datetime.now(timezone.utc).isoformat()}
+        entry_ai = {"sender": "ai", "text": reply[:2000], "at": datetime.now(timezone.utc).isoformat()}
+
+        low = last_user.lower()
+        crisis = any(w in low for w in _CRISIS_WORDS)
+
+        if snap.exists:
+            old = snap.to_dict() or {}
+            msgs = list(old.get("messages") or [])
+            msgs += [entry_user, entry_ai]
+            payload = {
+                "messages": msgs[-60:],
+                "messageCount": int(old.get("messageCount") or 0) + 2,
+                "lastMessage": last_user,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            }
+            if crisis:
+                payload["status"] = "crisis"
+            ref.set(payload, merge=True)
+        else:
+            full_name, phone = get_user_profile(uid)
+            ref.set({
+                "uid": uid,
+                "fullName": full_name or "User",
+                "phone": phone,
+                "firstMessage": last_user,
+                "lastMessage": last_user,
+                "messages": [entry_user, entry_ai],
+                "messageCount": 2,
+                "status": "crisis" if crisis else "safe",
+                "createdAt": firestore.SERVER_TIMESTAMP,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            })
+    except Exception as e:
+        print("chat save error:", e)
+
 
 @app.post("/api/support/ai")
 def support_ai():
@@ -1365,6 +1426,8 @@ def support_ai():
         parts = (cand.get("content") or {}).get("parts") or []
         reply = "".join(p_.get("text", "") for p_ in parts).strip()
         reply = reply.replace("**", "").replace("__", "")
+        if reply:
+            save_chat_session(user, data, contents, reply)
         if not reply:
             print("AI empty reply, finishReason:", cand.get("finishReason"), "feedback:", str(body.get("promptFeedback"))[:200])
             return jsonify({"success": True, "reply": AI_FALLBACK_REPLY})
@@ -1372,6 +1435,53 @@ def support_ai():
     except Exception as e:
         print("AI exception:", e)
         return jsonify({"success": False, "reply": AI_FALLBACK_REPLY, "message": "AI unavailable."}), 502
+
+
+# ---------------- EMERGENCY CONTACTS (cloud sync) ----------------
+
+@app.get("/api/contacts")
+def get_contacts():
+    decoded, error_response = require_user_from_token()
+    if error_response is not None:
+        return error_response
+    uid = str(decoded.get("uid") or "").strip()
+    try:
+        snap = db.collection("userContacts").document(uid).get()
+        items = (snap.to_dict() or {}).get("contacts", []) if snap.exists else []
+        return jsonify({"success": True, "contacts": items})
+    except Exception as e:
+        return jsonify({"success": False, "message": "Unable to load contacts.", "error": str(e)}), 500
+
+
+@app.put("/api/contacts")
+def put_contacts():
+    decoded, error_response = require_user_from_token()
+    if error_response is not None:
+        return error_response
+    uid = str(decoded.get("uid") or "").strip()
+    data = request.get_json(silent=True) or {}
+    clean = []
+    for c in (data.get("contacts") or [])[:5]:
+        name = str(c.get("name", "")).strip()[:60]
+        phone = str(c.get("phone", "")).strip()[:20]
+        if not name or not phone:
+            continue
+        clean.append({
+            "id": int(c.get("id") or 0) or int(time.time() * 1000),
+            "name": name,
+            "phone": phone,
+            "relation": str(c.get("relation", "Contact")).strip()[:30],
+            "initials": str(c.get("initials", ""))[:2],
+            "color": str(c.get("color", "#C9A84C"))[:9],
+            "primary": bool(c.get("primary")),
+        })
+    try:
+        db.collection("userContacts").document(uid).set(
+            {"contacts": clean, "updatedAt": firestore.SERVER_TIMESTAMP}
+        )
+        return jsonify({"success": True, "contacts": clean})
+    except Exception as e:
+        return jsonify({"success": False, "message": "Unable to save contacts.", "error": str(e)}), 500
 
 
 # ---------------- TOKEN REFRESH (keeps users logged in) ----------------
@@ -2242,6 +2352,30 @@ def admin_sos_status(doc_id):
         ), 500
 
 
+# ---------------- USER PROFILE HELPER ----------------
+
+def get_user_profile(uid):
+    """Return (fullName, phone) for a uid from Firestore, falling back to Firebase Auth."""
+    uid = str(uid or "").strip()
+    if not uid:
+        return "", ""
+    full_name, phone = "", ""
+    try:
+        snap = db.collection("users").document(uid).get()
+        if snap.exists:
+            d = snap.to_dict() or {}
+            full_name = str(d.get("fullName") or d.get("name") or "").strip()
+            phone = str(d.get("phone") or "").strip()
+    except Exception:
+        pass
+    if not full_name:
+        try:
+            full_name = str(auth.get_user(uid).display_name or "").strip()
+        except Exception:
+            pass
+    return full_name, phone
+
+
 # ---------------- USER COMPLAINTS ----------------
 
 @app.post("/api/complaints")
@@ -2281,10 +2415,14 @@ def create_complaint():
             except Exception:
                 email = ""
 
+        full_name, phone = get_user_profile(uid)
+
         doc_ref = db.collection("complaints").document()
         doc_ref.set(
             {
                 "uid": uid,
+                "fullName": full_name or "User",
+                "phone": phone,
                 "userEmail": email,
                 "category": category,
                 "description": description,
@@ -2430,6 +2568,16 @@ def public_complaints():
 def admin_complaints():
     try:
         rows = collection_records("complaints")
+        _name_cache = {}
+        for r in rows:
+            if r.get("fullName") or r.get("userName"):
+                continue
+            u = str(r.get("uid") or "").strip()
+            if not u:
+                continue
+            if u not in _name_cache:
+                _name_cache[u] = get_user_profile(u)
+            r["fullName"], r["phone"] = _name_cache[u][0], r.get("phone") or _name_cache[u][1]
         counts = status_counts(rows)
 
         resolved = counts.get("resolved", 0)

@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 
 import ScreenBackground from '../components/ScreenBackground';
-import { API_URL, saveSession } from './session-storage';
+import { API_URL, saveSession, syncContactsWithServer } from './session-storage';
 
 export default function LoginScreen() {
   const { width } = useWindowDimensions();
@@ -120,6 +120,7 @@ export default function LoginScreen() {
       };
       // Saves user + token + refresh token, so the session never silently expires.
       await saveSession(sessionUser, result.token, result.refreshToken, result.expiresIn);
+      await syncContactsWithServer(); // same contacts on web + mobile
 
       Animated.timing(progressAnim, {
         toValue: 1,

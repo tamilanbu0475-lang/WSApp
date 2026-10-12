@@ -16,6 +16,7 @@ import {
   View,
 } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
+import { pushContactsToServer, syncContactsWithServer } from './session-storage';
 
 interface Contact {
   id: number;
@@ -89,6 +90,12 @@ export default function ContactsScreen() {
       if (!active) return;
       setStorageKey(key);
       setContacts(saved);
+      // Pull the cloud copy (so web and mobile show the same contacts)
+      const remote = await syncContactsWithServer();
+      if (active && remote) {
+        const fresh = await readSavedContacts(key);
+        setContacts(fresh);
+      }
     })();
     return () => { active = false; };
   }, []);
@@ -100,6 +107,7 @@ export default function ContactsScreen() {
       if (Platform.OS === 'web') getWebStorage()?.setItem?.(storageKey, value);
       else await AsyncStorage.setItem(storageKey, value);
     } catch {}
+    pushContactsToServer(next);
   };
 
   const phoneRef = useRef<TextInput>(null);

@@ -302,3 +302,53 @@ export async function getClientKey(): Promise<string> {
   await setValue(CLIENT_KEY, generated);
   return generated;
 }
+
+// ---------------------------------------------------------------------------
+// Emergency contacts: cloud copy (same data on web + mobile). Local copy stays as cache.
+// ---------------------------------------------------------------------------
+
+export function contactsKeyFor(user: StoredUser | null | undefined): string {
+  const id = String(user?.uid || user?.id || user?.email || user?.phone || 'guest').trim().toLowerCase();
+  return `wsapp_emergency_contacts_${id}`;
+}
+
+export async function pushContactsToServer(contacts: unknown[]): Promise<void> {
+  try {
+    await authFetch(`${API_URL}/api/contacts`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contacts }),
+    });
+  } catch {
+    // Offline: local copy is kept, it syncs on the next save / login.
+  }
+}
+
+/** Download contacts from the server into local storage. If the server is empty but this device has some, upload them. */
+export async function syncContactsWithServer(): Promise<unknown[] | null> {
+  try {
+    const { user } = await loadSession();
+    if (!user) return null;
+    const key = contactsKeyFor(user);
+
+    const res = await authFetch(`${API_URL}/api/contacts`, {}, 30000);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.success) return null;
+
+    const remote: unknown[] = Array.isArray(data.contacts) ? data.contacts : [];
+    if (remote.length > 0) {
+      await setValue(key, JSON.stringify(remote));
+      return remote;
+    }
+
+    const localRaw = await getUserStorage(key);
+    const local = localRaw ? JSON.parse(localRaw) : [];
+    if (Array.isArray(local) && local.length > 0) {
+      await pushContactsToServer(local);
+      return local;
+    }
+    return [];
+  } catch {
+    return null;
+  }
+}
