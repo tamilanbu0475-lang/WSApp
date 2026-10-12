@@ -1374,6 +1374,48 @@ def support_ai():
         return jsonify({"success": False, "reply": AI_FALLBACK_REPLY, "message": "AI unavailable."}), 502
 
 
+# ---------------- TOKEN REFRESH (keeps users logged in) ----------------
+
+@app.post("/api/token/refresh")
+def refresh_user_token():
+    """Exchange a Firebase refresh token for a new 1-hour ID token."""
+    try:
+        data = request.get_json(silent=True) or {}
+        refresh_token = str(data.get("refreshToken") or "").strip()
+        if not refresh_token:
+            return jsonify({"success": False, "message": "Refresh token required."}), 400
+
+        key = os.getenv("FIREBASE_WEB_API_KEY")
+        if not key:
+            return jsonify({"success": False, "message": "Server is not configured."}), 503
+
+        r = requests.post(
+            f"https://securetoken.googleapis.com/v1/token?key={key}",
+            data={"grant_type": "refresh_token", "refresh_token": refresh_token},
+            timeout=15,
+        )
+        try:
+            result = r.json()
+        except Exception:
+            result = {}
+
+        if r.status_code != 200 or not result.get("id_token"):
+            # Refresh token rejected (expired / revoked / account disabled) -> user must log in again.
+            if r.status_code in (400, 401):
+                return jsonify({"success": False, "message": "Session expired. Please log in again."}), 401
+            return jsonify({"success": False, "message": "Unable to refresh session right now."}), 502
+
+        return jsonify({
+            "success": True,
+            "token": result.get("id_token"),
+            "refreshToken": result.get("refresh_token") or refresh_token,
+            "expiresIn": result.get("expires_in"),
+        })
+    except Exception as e:
+        print("Token refresh failed:", e)
+        return jsonify({"success": False, "message": "Unable to refresh session right now."}), 502
+
+
 # ---------------- USER SOS / NEAREST POLICE ----------------
 
 def verify_user_token_optional():

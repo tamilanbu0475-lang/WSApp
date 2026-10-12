@@ -14,9 +14,9 @@ import {
   View
 } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
+import { API_URL, getClientKey } from './session-storage';
 
 const CATEGORIES = ['Harassment', 'Stalking', 'Abuse', 'Threat', 'Cyber Crime', 'Other'];
-const API_URL = 'https://wsapp-9w4r.onrender.com';
 
 type Complaint = {
   id: string;
@@ -30,24 +30,14 @@ type Complaint = {
   resolvedAt?: string | { seconds?: number };
 };
 
-function getStorage() {
-  return typeof globalThis !== 'undefined' ? (globalThis as any).localStorage : null;
-}
-
-function getClientKey() {
+// The free Render server can take up to a minute to wake up.
+async function fetchWithTimeout(url: string, options: any, ms = 60000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
   try {
-    const storage = getStorage();
-    if (!storage) return '';
-    const existing = storage.getItem('wsComplaintClientKey');
-    if (existing && existing.length >= 20) return existing;
-    const generated =
-      (typeof crypto !== 'undefined' && (crypto as any).randomUUID)
-        ? (crypto as any).randomUUID()
-        : `ws-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
-    storage.setItem('wsComplaintClientKey', generated);
-    return generated;
-  } catch {
-    return '';
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -98,7 +88,7 @@ export default function ReportScreen() {
   const [reports, setReports] = useState<Complaint[]>([]);
 
   const loadReports = useCallback(async () => {
-    const clientKey = getClientKey();
+    const clientKey = await getClientKey();
     if (!clientKey) {
       setLoadingReports(false);
       return;
@@ -133,15 +123,15 @@ export default function ReportScreen() {
       return;
     }
 
-    const clientKey = getClientKey();
+    const clientKey = await getClientKey();
     if (!clientKey) {
-      Alert.alert('Unable to Submit', 'Please refresh the page and try again.');
+      Alert.alert('Unable to Submit', 'Could not prepare your report. Please restart the app and try again.');
       return;
     }
 
     setSubmitting(true);
     try {
-      const res = await fetch(`${API_URL}/api/complaints/public`, {
+      const res = await fetchWithTimeout(`${API_URL}/api/complaints/public`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -163,7 +153,12 @@ export default function ReportScreen() {
       setLocation('');
       await loadReports();
     } catch (e: any) {
-      Alert.alert('Submission Failed', e?.message || 'Unable to submit complaint right now.');
+      const msg = e?.name === 'AbortError'
+        ? 'The server is waking up. Please wait a few seconds and press Submit again.'
+        : /network request failed|failed to fetch/i.test(String(e?.message || ''))
+          ? 'Cannot reach the server. Check your internet connection and try again.'
+          : (e?.message || 'Unable to submit complaint right now.');
+      Alert.alert('Submission Failed', msg);
     } finally {
       setSubmitting(false);
     }

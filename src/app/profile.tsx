@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 
 import ScreenBackground from '../components/ScreenBackground';
-import { clearSession, getSessionToken, getUserStorage, loadSession } from './session-storage';
+import { API_URL, authFetch, clearSession, getSessionToken, getUserStorage, loadSession } from './session-storage';
 
 export default function ProfileScreen() {
   const { width } = useWindowDimensions();
@@ -47,16 +47,11 @@ export default function ProfileScreen() {
       }
     } catch {}
 
-    const api = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
+    const api = API_URL;
     for (let attempt = 1; attempt <= 4; attempt++) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 40000);
       try {
-        const res = await fetch(`${api}/api/user/stats?uid=${encodeURIComponent(uid)}`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
+        // authFetch refreshes an expired token automatically.
+        const res = await authFetch(`${api}/api/user/stats?uid=${encodeURIComponent(uid)}`, {}, 40000);
         const data = await res.json().catch(() => null);
         if (res.ok && data?.success) {
           const s = Number(data.sosCount || 0);
@@ -67,7 +62,7 @@ export default function ProfileScreen() {
           return;
         }
       } catch {
-        clearTimeout(timeoutId);
+        // retry below
       }
       await new Promise(resolve => setTimeout(resolve, 3000));
     }
@@ -190,10 +185,9 @@ export default function ProfileScreen() {
           return;
         }
 
-        const api = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
-        const res = await fetch(`${api}/api/account/deactivate`, {
+        const res = await authFetch(`${API_URL}/api/account/deactivate`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
         });
         const data = await res.json().catch(() => ({}));
 

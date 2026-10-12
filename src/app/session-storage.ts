@@ -10,8 +10,22 @@ export type StoredUser = {
   [key: string]: unknown;
 };
 
+/**
+ * ONE backend URL for the whole app.
+ * Only an https:// value from EXPO_PUBLIC_BACKEND_URL is accepted, so a local
+ * http://10.x.x.x address can never end up inside the APK again.
+ */
+export const API_URL: string = (() => {
+  const env = String(process.env.EXPO_PUBLIC_BACKEND_URL || '').trim();
+  if (/^https:\/\//i.test(env)) return env.replace(/\/+$/, '');
+  return 'https://wsapp-9w4r.onrender.com';
+})();
+
 const USER_KEYS = ['wsUser', 'user', 'userData', 'wsappUser'] as const;
 const TOKEN_KEYS = ['wsToken', 'token', 'idToken', 'wsAuthToken'] as const;
+const REFRESH_KEY = 'wsRefreshToken';
+const EXPIRY_KEY = 'wsTokenExp';
+const CLIENT_KEY = 'wsComplaintClientKey';
 
 function getWebStorage(): Storage | null {
   try {
@@ -22,6 +36,22 @@ function getWebStorage(): Storage | null {
     // Ignore web storage errors.
   }
   return null;
+}
+
+async function setValue(key: string, value: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(key, value);
+  } catch {
+    // Ignore, web copy below may still work.
+  }
+  const web = getWebStorage();
+  if (web) {
+    try {
+      web.setItem(key, value);
+    } catch {
+      // Ignore.
+    }
+  }
 }
 
 async function getFirstValue(keys: readonly string[]): Promise<string | null> {
@@ -98,8 +128,22 @@ export async function getSessionToken(): Promise<string> {
   return (await getFirstValue(TOKEN_KEYS)) ?? '';
 }
 
+/** Called by the login screen: saves user + token + refresh token + expiry time. */
+export async function saveSession(
+  user: StoredUser,
+  token?: string | null,
+  refreshToken?: string | null,
+  expiresInSec?: number | string | null
+): Promise<void> {
+  await setValue('wsUser', JSON.stringify(user));
+  if (token) await setValue('wsToken', String(token));
+  if (refreshToken) await setValue(REFRESH_KEY, String(refreshToken));
+  const secs = Number(expiresInSec || 3600);
+  await setValue(EXPIRY_KEY, String(Date.now() + secs * 1000));
+}
+
 export async function clearSession(): Promise<void> {
-  const allKeys = [...USER_KEYS, ...TOKEN_KEYS];
+  const allKeys = [...USER_KEYS, ...TOKEN_KEYS, REFRESH_KEY, EXPIRY_KEY];
 
   await Promise.all(
     allKeys.map(async (key) => {
@@ -121,4 +165,140 @@ export async function clearSession(): Promise<void> {
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Token refresh (Firebase tokens expire after 1 hour; refresh token does not)
+// ---------------------------------------------------------------------------
+
+type RefreshResult = { token: string | null; invalid: boolean };
+
+let refreshInFlight: Promise<RefreshResult> | null = null;
+
+async function doRefresh(timeoutMs: number): Promise<RefreshResult> {
+  const refreshToken = (await getUserStorage(REFRESH_KEY)) || '';
+  if (!refreshToken) return { token: null, invalid: true };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_URL}/api/token/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok && data?.success && data?.token) {
+      await setValue('wsToken', String(data.token));
+      if (data.refreshToken) await setValue(REFRESH_KEY, String(data.refreshToken));
+      const secs = Number(data.expiresIn || 3600);
+      await setValue(EXPIRY_KEY, String(Date.now() + secs * 1000));
+      return { token: String(data.token), invalid: false };
+    }
+    // 401 = the refresh token itself is dead (password changed, account disabled...)
+    return { token: null, invalid: res.status === 401 };
+  } catch {
+    // Offline / server asleep: not the user's fault, keep the session.
+    return { token: null, invalid: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function refreshSessionToken(timeoutMs = 20000): Promise<RefreshResult> {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefresh(timeoutMs).finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+/** Returns a valid token. Refreshes it first if it is expired or about to expire. */
+export async function getFreshToken(timeoutMs = 20000): Promise<string> {
+  const token = await getSessionToken();
+  const exp = Number((await getUserStorage(EXPIRY_KEY)) || 0);
+  const hasRefresh = !!(await getUserStorage(REFRESH_KEY));
+
+  if (token && exp && exp - Date.now() > 5 * 60 * 1000) return token;
+  if (!hasRefresh) return token; // old session without refresh token
+
+  const r = await refreshSessionToken(timeoutMs);
+  return r.token || token;
+}
+
+/** fetch() with the login token attached. On 401 it refreshes the token and retries once. */
+export async function authFetch(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 45000
+): Promise<Response> {
+  const run = async (token: string) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, {
+        ...init,
+        headers: {
+          ...((init.headers as Record<string, string>) || {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  let res = await run(await getFreshToken());
+  if (res.status === 401) {
+    const r = await refreshSessionToken();
+    if (r.token) res = await run(r.token);
+  }
+  return res;
+}
+
+/**
+ * Used by the splash screen. true = go to Home, false = go to Login.
+ * - no user / no token / no refresh token (old session) -> Login
+ * - refresh token rejected by server -> clear session -> Login
+ * - server asleep or offline -> keep session, go Home (it refreshes later)
+ */
+export async function validateSession(): Promise<boolean> {
+  const { user, token } = await loadSession();
+  if (!user || !token) return false;
+
+  const hasRefresh = !!(await getUserStorage(REFRESH_KEY));
+  if (!hasRefresh) {
+    await clearSession();
+    return false;
+  }
+
+  const exp = Number((await getUserStorage(EXPIRY_KEY)) || 0);
+  if (exp && exp - Date.now() > 5 * 60 * 1000) return true;
+
+  const r = await refreshSessionToken(8000);
+  if (r.token) return true;
+  if (r.invalid) {
+    await clearSession();
+    return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Anonymous report key (works on Android AND web; the old code used web-only localStorage)
+// ---------------------------------------------------------------------------
+
+export async function getClientKey(): Promise<string> {
+  const existing = await getUserStorage(CLIENT_KEY);
+  if (existing && existing.length >= 20) return existing;
+
+  const generated = `ws-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+  await setValue(CLIENT_KEY, generated);
+  return generated;
 }

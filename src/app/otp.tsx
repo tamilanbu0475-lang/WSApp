@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 
 import ScreenBackground from '../components/ScreenBackground';
+import { API_URL } from './session-storage';
 
 const MSG91_MOBILE_WIDGET_ID =
   process.env.EXPO_PUBLIC_MSG91_WIDGET_ID || 'PASTE_MOBILE_WIDGET_ID_HERE';
@@ -25,8 +26,7 @@ const MSG91_WEB_WIDGET_ID =
 const MSG91_WEB_TOKEN_AUTH =
   process.env.EXPO_PUBLIC_MSG91_WEB_TOKEN_AUTH || 'PASTE_WEB_WIDGET_TOKEN_HERE';
 
-const BACKEND_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL || 'http://10.81.141.192:5000';
+const BACKEND_URL = API_URL;
 
 type WebOtpApi = {
   sendOtp: (

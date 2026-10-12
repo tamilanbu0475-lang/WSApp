@@ -1,7 +1,7 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   Image,
   KeyboardAvoidingView,
@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 
 import ScreenBackground from '../components/ScreenBackground';
+import { API_URL, saveSession } from './session-storage';
 
 export default function LoginScreen() {
   const { width } = useWindowDimensions();
@@ -37,8 +38,7 @@ export default function LoginScreen() {
   const btnScale = useRef(new Animated.Value(1)).current;
   const pwdRef = useRef<TextInput>(null);
 
-  const BACKEND_URL =
-    process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
+  const BACKEND_URL = API_URL;
 
   // The free Render server can take up to a minute to wake up, so wait for it.
   const fetchWithTimeout = async (url: string, options: any, ms = 60000) => {
@@ -118,16 +118,8 @@ export default function LoginScreen() {
         phone: String(result.user?.phone ?? normalizedPhone),
         email: String(result.user?.email ?? ''),
       };
-      await AsyncStorage.setItem('wsUser', JSON.stringify(sessionUser));
-      if (result.token) await AsyncStorage.setItem('wsToken', String(result.token));
-
-      // Keep a synchronous browser copy so web refresh can restore the page immediately.
-      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-        try {
-          window.localStorage.setItem('wsUser', JSON.stringify(sessionUser));
-          if (result.token) window.localStorage.setItem('wsToken', String(result.token));
-        } catch {}
-      }
+      // Saves user + token + refresh token, so the session never silently expires.
+      await saveSession(sessionUser, result.token, result.refreshToken, result.expiresIn);
 
       Animated.timing(progressAnim, {
         toValue: 1,
@@ -438,12 +430,18 @@ export default function LoginScreen() {
 
             {/* Google */}
             <TouchableOpacity
-              style={styles.googleBtn}
+              style={[styles.googleBtn, { opacity: 0.6 }]}
               activeOpacity={0.8}
+              onPress={() =>
+                Alert.alert(
+                  'Coming Soon',
+                  'Google sign-in will be added in a future update. Please sign in with your mobile number and password.'
+                )
+              }
             >
               <Text style={styles.googleIcon}>G</Text>
               <Text style={styles.googleTxt}>
-                Continue with Google
+                Google Sign-In  ·  Coming Soon
               </Text>
             </TouchableOpacity>
 

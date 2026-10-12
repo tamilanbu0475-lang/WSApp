@@ -14,9 +14,8 @@ import {
   View,
 } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
-import { loadSession } from './session-storage';
+import { API_URL, authFetch } from './session-storage';
 
-const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
 
 type Mode = 'ai' | 'team';
 
@@ -83,21 +82,18 @@ export default function SupportScreen() {
   // Real AI reply from the backend (key stays on the server). Falls back to the built-in reply if offline.
   const askAi = async (history: Message[], userText: string): Promise<string> => {
     try {
-      const { token } = await loadSession();
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 45000);
-      const res = await fetch(`${API_URL}/api/support/ai`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      // authFetch adds the token, refreshes it if expired, and retries once on 401.
+      const res = await authFetch(
+        `${API_URL}/api/support/ai`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: history.map(m => ({ sender: m.sender, text: m.text })),
+          }),
         },
-        body: JSON.stringify({
-          messages: history.map(m => ({ sender: m.sender, text: m.text })),
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
+        60000
+      );
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) {
         return 'Your login session has expired. Please log out and log in again to use AI support. If you are in danger, press SOS or call 112.';

@@ -16,9 +16,9 @@ import {
 } from 'react-native';
 
 import ScreenBackground from '../components/ScreenBackground';
+import { API_URL } from './session-storage';
 
-const BACKEND_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL || 'http://10.81.141.192:5000';
+const BACKEND_URL = API_URL;
 
 export default function RegisterScreen() {
   const { width } = useWindowDimensions();

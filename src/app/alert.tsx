@@ -18,6 +18,7 @@ import {
   View,
 } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
+import { API_URL, getFreshToken } from './session-storage';
 
 export default function AlertScreen() {
   const { width } = useWindowDimensions();
@@ -72,9 +73,6 @@ export default function AlertScreen() {
     }, [safe])
   );
 
-  const API_URL =
-    process.env.EXPO_PUBLIC_BACKEND_URL || 'https://wsapp-9w4r.onrender.com';
-
   const getStorageValue = async (keys: string[]) => {
     for (const key of keys) {
       try {
@@ -103,6 +101,11 @@ export default function AlertScreen() {
   };
 
   const getStoredToken = async () => {
+    // Refreshes the token first if it expired (max 5 s, so SOS is never delayed).
+    try {
+      const fresh = await getFreshToken(5000);
+      if (fresh) return fresh;
+    } catch {}
     return await getStorageValue(['wsToken', 'token', 'idToken', 'wsAuthToken']);
   };
 

@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
-import { loadSession } from './session-storage';
+import { API_URL, validateSession } from './session-storage';
 
 
 export default function SplashScreen() {
@@ -32,12 +32,14 @@ export default function SplashScreen() {
         Animated.timing(subOpacity,  { toValue: 1, duration: 700, useNativeDriver: true }),
       ]),
     ]).start();
+    // Wake the free Render server while the splash animation plays.
+    fetch(API_URL).catch(() => {});
     let cancelled = false;
     const t = setTimeout(async () => {
       let next = '/login';
       try {
-        const { user, token } = await loadSession();
-        if (user && token) next = '/';
+        // Checks the saved login; refreshes an expired token; goes to Login only if really needed.
+        if (await validateSession()) next = '/';
       } catch {}
       if (!cancelled) router.replace(next as any);
     }, 2800);
