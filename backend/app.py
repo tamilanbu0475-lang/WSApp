@@ -2714,6 +2714,48 @@ def admin_chat():
         ), 500
 
 
+# ---------------- PUBLIC (mobile/web app reads these) ----------------
+
+@app.get("/api/announcements")
+def public_announcements():
+    try:
+        rows = [r for r in collection_records("announcements") if r.get("active", True)]
+        out = [
+            {
+                "id": r.get("id"),
+                "title": r.get("title", ""),
+                "description": r.get("description", ""),
+                "icon": r.get("icon") or "📢",
+                "date": r.get("date") or str(r.get("createdAt") or "")[:10],
+            }
+            for r in rows[:10]
+        ]
+        return jsonify({"success": True, "announcements": out})
+    except Exception as e:
+        return jsonify({"success": False, "announcements": [], "error": str(e)}), 500
+
+
+@app.get("/api/helplines")
+def public_helplines():
+    try:
+        rows = [r for r in collection_records("helplines") if r.get("active", True)]
+        rows.sort(key=lambda x: str(x.get("name", "")).lower())
+        out = [
+            {
+                "id": r.get("id"),
+                "name": r.get("name", ""),
+                "number": r.get("number", ""),
+                "category": r.get("category", ""),
+                "icon": r.get("icon") or "📞",
+            }
+            for r in rows
+            if r.get("name") and r.get("number")
+        ]
+        return jsonify({"success": True, "helplines": out})
+    except Exception as e:
+        return jsonify({"success": False, "helplines": [], "error": str(e)}), 500
+
+
 @app.get("/api/admin/announcements")
 def admin_announcements():
     try:

@@ -2,7 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Image, Linking, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import ScreenBackground from '../components/ScreenBackground';
-import { loadSession } from './session-storage';
+import { API_URL, loadSession } from './session-storage';
 
 // Phone: every fresh app start shows the animated splash first (web already opens /splash).
 let splashShown = false;
@@ -13,6 +13,10 @@ const HELPLINES = [
   { name: 'Ambulance', number: '108', icon: '🚑', color: '#60a5fa' },
   { name: 'iCall Support', number: '9152987821', icon: '💬', color: '#a78bfa' },
 ];
+
+const HL_COLORS = ['#C9A84C', '#4ade80', '#60a5fa', '#a78bfa', '#f472b6', '#fb923c'];
+
+type Announcement = { id: string; title: string; description: string; icon: string; date?: string };
 
 const QUICK = [
   { label: 'Emergency\nContacts', icon: '👥', route: '/contacts', color: '#C9A84C' },
@@ -34,6 +38,41 @@ const getInitials = (name: string) =>
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
+
+  // Helplines + announcements managed from the admin panel (fallback: built-in list)
+  const [helplines, setHelplines] = useState(HELPLINES);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const [hr, ar] = await Promise.all([
+          fetch(`${API_URL}/api/helplines`),
+          fetch(`${API_URL}/api/announcements`),
+        ]);
+        const hd = await hr.json().catch(() => ({}));
+        const ad = await ar.json().catch(() => ({}));
+        if (!active) return;
+        if (hd?.success && Array.isArray(hd.helplines) && hd.helplines.length > 0) {
+          setHelplines(
+            hd.helplines.map((h: any, i: number) => ({
+              name: String(h.name),
+              number: String(h.number),
+              icon: String(h.icon || '📞'),
+              color: HL_COLORS[i % HL_COLORS.length],
+            }))
+          );
+        }
+        if (ad?.success && Array.isArray(ad.announcements)) setAnnouncements(ad.announcements);
+      } catch {
+        // offline: keep the built-in helplines
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const params = useLocalSearchParams<{ fullName?: string; phone?: string; email?: string; uid?: string }>();
 
@@ -322,7 +361,7 @@ export default function HomeScreen() {
           <View style={styles.secLine} />
         </View>
 
-        {HELPLINES.map((h) => (
+        {helplines.map((h) => (
           <View key={h.number} style={styles.hlCard}>
             <View
               style={[
@@ -355,6 +394,23 @@ export default function HomeScreen() {
           </View>
         ))}
 
+        {/* ANNOUNCEMENTS (from admin panel) */}
+        {announcements.length > 0 && (
+          <View style={{ marginTop: 18 }}>
+            <Text style={styles.sosLabel}>ANNOUNCEMENTS</Text>
+            {announcements.map((a) => (
+              <View key={a.id} style={styles.annCard}>
+                <Text style={{ fontSize: 22 }}>{a.icon || '📢'}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.annTitle}>{a.title}</Text>
+                  <Text style={styles.annDesc}>{a.description}</Text>
+                  {!!a.date && <Text style={styles.annDate}>{a.date}</Text>}
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+
         {/* OFFLINE */}
         <View style={styles.offlineCard}>
           <Text style={{ fontSize: 18 }}>📡</Text>
@@ -375,6 +431,19 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  annCard: {
+    flexDirection: 'row',
+    gap: 12,
+    backgroundColor: 'rgba(201,168,76,0.08)',
+    borderColor: 'rgba(201,168,76,0.28)',
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 10,
+  },
+  annTitle: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  annDesc: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 4, lineHeight: 17 },
+  annDate: { color: 'rgba(201,168,76,0.8)', fontSize: 10, marginTop: 6 },
   container: {
     flex: 1,
     backgroundColor: '#1A0310',
