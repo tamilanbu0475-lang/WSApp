@@ -662,7 +662,7 @@ export default function ProfileScreen() {
           )}
 
           <Text style={styles.version}>
-            WS App v1.0.0 • BCA Major Project 2025
+            WS App v1.0.0 
           </Text>
 
           {/* FOOTER */}

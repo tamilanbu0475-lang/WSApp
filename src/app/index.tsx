@@ -396,12 +396,12 @@ export default function HomeScreen() {
 
         {/* ANNOUNCEMENTS (from admin panel) */}
         {announcements.length > 0 && (
-          <View style={{ marginTop: 18 }}>
-            <Text style={styles.sosLabel}>ANNOUNCEMENTS</Text>
+          <View style={styles.annWrap}>
+            <Text style={styles.annHeading}>ANNOUNCEMENTS</Text>
             {announcements.map((a) => (
               <View key={a.id} style={styles.annCard}>
-                <Text style={{ fontSize: 22 }}>{a.icon || '📢'}</Text>
-                <View style={{ flex: 1 }}>
+                <Text style={styles.annIcon}>{a.icon || '📢'}</Text>
+                <View style={styles.annBody}>
                   <Text style={styles.annTitle}>{a.title}</Text>
                   <Text style={styles.annDesc}>{a.description}</Text>
                   {!!a.date && <Text style={styles.annDate}>{a.date}</Text>}
@@ -431,19 +431,47 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  annWrap: {
+    width: '100%',
+    flexShrink: 0,
+    marginTop: 8,
+    marginBottom: 20,
+  },
+  annHeading: {
+    width: '100%',
+    textAlign: 'center',
+    color: 'rgba(255,255,255,0.3)',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 4,
+    marginBottom: 14,
+  },
   annCard: {
+    width: '100%',
+    flexShrink: 0,
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'flex-start',
+    gap: 14,
     backgroundColor: 'rgba(201,168,76,0.08)',
-    borderColor: 'rgba(201,168,76,0.28)',
+    borderColor: 'rgba(201,168,76,0.30)',
     borderWidth: 1,
     borderRadius: 14,
-    padding: 14,
-    marginTop: 10,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    marginBottom: 10,
   },
-  annTitle: { color: '#fff', fontSize: 14, fontWeight: '800' },
-  annDesc: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 4, lineHeight: 17 },
-  annDate: { color: 'rgba(201,168,76,0.8)', fontSize: 10, marginTop: 6 },
+  annIcon: { fontSize: 26, marginTop: 2 },
+  annBody: { flex: 1, minWidth: 0 },
+  annTitle: { color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'left' },
+  annDesc: {
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 13,
+    marginTop: 6,
+    lineHeight: 20,
+    textAlign: 'left',
+    flexShrink: 1,
+  },
+  annDate: { color: 'rgba(201,168,76,0.85)', fontSize: 11, marginTop: 8, textAlign: 'left' },
   container: {
     flex: 1,
     backgroundColor: '#1A0310',
